@@ -103,25 +103,25 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) -> Colors {
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.global_style()).clone();
-    style.spacing.item_spacing = egui::vec2(9.0, 9.0);
-    style.spacing.button_padding = egui::vec2(14.0, 8.0);
-    style.spacing.interact_size.y = 40.0;
+    style.spacing.item_spacing = egui::vec2(7.0, 7.0);
+    style.spacing.button_padding = egui::vec2(11.0, 6.0);
+    style.spacing.interact_size.y = 34.0;
     style.spacing.text_edit_width = 280.0;
     style.text_styles.insert(
         egui::TextStyle::Body,
-        egui::FontId::new(15.5, egui::FontFamily::Proportional),
+        egui::FontId::new(14.5, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Button,
-        egui::FontId::new(15.0, egui::FontFamily::Proportional),
+        egui::FontId::new(14.0, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(21.0, egui::FontFamily::Proportional),
+        egui::FontId::new(19.0, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Small,
-        egui::FontId::new(13.5, egui::FontFamily::Proportional),
+        egui::FontId::new(12.5, egui::FontFamily::Proportional),
     );
     ctx.set_global_style(style);
     colors

@@ -1,5 +1,6 @@
 use crate::autostart;
 use crate::credentials::CredentialStore;
+use crate::desktop;
 use crate::display::DisplayCatalog;
 use crate::freerdp::FreeRdpBackend;
 use crate::icons;
@@ -22,6 +23,7 @@ pub struct RustRdpApp {
     sessions: SessionManager,
     selected: Option<Uuid>,
     draft: Option<Profile>,
+    editor_section: EditorSection,
     main_view: MainView,
     quick_draft: QuickConnection,
     search: String,
@@ -32,8 +34,10 @@ pub struct RustRdpApp {
     tray: Option<TrayIntegration>,
     tray_actions: Receiver<TrayAction>,
     quitting: bool,
+    minimize_on_first_frame: bool,
     colors: Colors,
     display_catalog: DisplayCatalog,
+    app_logo: egui::TextureHandle,
 }
 
 struct PasswordPrompt {
@@ -63,6 +67,14 @@ enum EditorAction {
     Connect,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum EditorSection {
+    #[default]
+    Connection,
+    Display,
+    Resources,
+}
+
 enum QuickAction {
     None,
     Connect(QuickConnection),
@@ -78,7 +90,7 @@ enum MainView {
 }
 
 impl RustRdpApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, start_minimized: bool) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "material-icons".to_owned(),
@@ -92,6 +104,13 @@ impl RustRdpApp {
             .or_default()
             .push("material-icons".to_owned());
         cc.egui_ctx.set_fonts(fonts);
+        let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/rustrdp.png"))
+            .expect("the bundled RustRDP icon must be a valid PNG");
+        let app_logo = cc.egui_ctx.load_texture(
+            "rustrdp-logo",
+            egui::ColorImage::from(&icon),
+            egui::TextureOptions::LINEAR,
+        );
         let config_path = storage::default_config_path().ok();
         let (data, load_error) = match config_path.as_deref().map(storage::load) {
             Some(Ok(data)) => (data, None),
@@ -124,6 +143,7 @@ impl RustRdpApp {
             sessions: SessionManager::default(),
             selected,
             draft: None,
+            editor_section: EditorSection::default(),
             main_view,
             quick_draft: QuickConnection::default(),
             search: String::new(),
@@ -137,8 +157,10 @@ impl RustRdpApp {
             tray,
             tray_actions,
             quitting: false,
+            minimize_on_first_frame: start_minimized,
             colors,
             display_catalog: DisplayCatalog::detect(),
+            app_logo,
         }
     }
 
@@ -194,6 +216,7 @@ impl RustRdpApp {
         self.main_view = MainView::Connections;
         self.selected = None;
         self.draft = Some(Profile::default());
+        self.editor_section = EditorSection::Connection;
     }
 
     fn begin_edit(&mut self, profile_id: Uuid) {
@@ -205,6 +228,7 @@ impl RustRdpApp {
             .iter()
             .find(|profile| profile.id == profile_id)
             .cloned();
+        self.editor_section = EditorSection::Connection;
     }
 
     fn save_draft(&mut self) -> bool {
@@ -367,19 +391,19 @@ impl RustRdpApp {
     fn show_top_bar(&mut self, root: &mut egui::Ui) {
         egui::Frame::new()
             .fill(self.colors.toolbar)
-            .inner_margin(egui::Margin::symmetric(18, 10))
+            .inner_margin(egui::Margin::symmetric(14, 7))
             .show(root, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(icons::DESKTOP)
-                            .size(27.0)
-                            .color(self.colors.accent),
+                    ui.add(
+                        egui::Image::new(&self.app_logo)
+                            .fit_to_exact_size(Vec2::splat(30.0))
+                            .corner_radius(6.0),
                     );
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new("RustRDP")
-                                .size(18.0)
+                                .size(17.0)
                                 .strong()
                                 .color(self.colors.heading),
                         );
@@ -389,7 +413,7 @@ impl RustRdpApp {
                                 .color(self.colors.muted),
                         );
                     });
-                    ui.add_space(14.0);
+                    ui.add_space(10.0);
                     match &self.backend {
                         Ok(backend) => status_chip(
                             ui,
@@ -454,7 +478,7 @@ impl RustRdpApp {
                 .fill(self.colors.bg)
                 .stroke(egui::Stroke::new(1.0, self.colors.border))
                 .corner_radius(egui::CornerRadius::same(6))
-                .inner_margin(egui::Margin::symmetric(10, 3))
+                .inner_margin(egui::Margin::symmetric(9, 5))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
@@ -541,7 +565,13 @@ impl RustRdpApp {
                 self.colors,
             );
         } else if let Some(draft) = self.draft.as_mut() {
-            editor_action = profile_editor(root, draft, self.colors, &self.display_catalog);
+            editor_action = profile_editor(
+                root,
+                draft,
+                &mut self.editor_section,
+                self.colors,
+                &self.display_catalog,
+            );
         } else if let Some(profile) = self.selected_profile() {
             summary_action = profile_summary(root, profile, self.colors);
         } else {
@@ -768,6 +798,7 @@ impl RustRdpApp {
                     ui.label("Password");
                     let field = egui::TextEdit::singleline(&mut prompt.password)
                         .password(!prompt.visible)
+                        .margin(egui::Margin::symmetric(8, 5))
                         .desired_width(280.0);
                     let response = ui.add(field);
                     if response.lost_focus()
@@ -933,6 +964,10 @@ impl eframe::App for RustRdpApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         self.process_tray_actions(&ctx);
+        if self.minimize_on_first_frame {
+            self.minimize_on_first_frame = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
         if self.sessions.poll() {
             self.update_tray();
         }
@@ -955,7 +990,7 @@ impl eframe::App for RustRdpApp {
             && self.tray.is_some()
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             self.success("RustRDP is still available in the system tray");
         }
         egui::CentralPanel::default()
@@ -968,9 +1003,9 @@ impl eframe::App for RustRdpApp {
                     egui::Frame::new()
                         .fill(self.colors.sidebar)
                         .stroke(egui::Stroke::new(1.0, self.colors.border))
-                        .inner_margin(egui::Margin::symmetric(14, 16))
+                        .inner_margin(egui::Margin::symmetric(10, 11))
                         .show(ui, |ui| {
-                            ui.set_width(270.0);
+                            ui.set_width(248.0);
                             ui.set_height(content_height);
                             if let Some(id) = self.show_library(ui) {
                                 self.request_connect(id);
@@ -978,7 +1013,7 @@ impl eframe::App for RustRdpApp {
                         });
                     egui::Frame::new()
                         .fill(self.colors.bg)
-                        .inner_margin(egui::Margin::symmetric(22, 8))
+                        .inner_margin(egui::Margin::symmetric(16, 6))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.set_height(content_height);
@@ -1058,50 +1093,64 @@ fn profile_summary(ui: &mut egui::Ui, profile: &Profile, colors: Colors) -> Summ
     });
     ui.add_space(18.0);
     ui.columns(2, |columns| {
-        summary_card(&mut columns[0], icons::KEY, "Connection", colors, |ui| {
-            detail_row(ui, "Computer", &profile.connection.host, colors);
-            detail_row(ui, "Port", &profile.connection.port.to_string(), colors);
-            detail_row(
-                ui,
-                "Username",
-                value_or_dash(&profile.connection.username),
-                colors,
-            );
-            detail_row(
-                ui,
-                "Domain",
-                value_or_dash(&profile.connection.domain),
-                colors,
-            );
-        });
-        summary_card(&mut columns[1], icons::DISPLAY, "Display", colors, |ui| {
-            detail_row(
-                ui,
-                "Window mode",
-                display_mode_name(profile.display.mode),
-                colors,
-            );
-            let resolution = if profile.display.dynamic_resolution {
-                "Dynamic — adapts to the window".to_owned()
-            } else if let Some(resolution) = profile.display.resolution {
-                format!("{} × {} pixels", resolution.width, resolution.height)
-            } else {
-                "Fixed".to_owned()
-            };
-            detail_row(ui, "Resolution", &resolution, colors);
-            if profile.display.mode == DisplayMode::Fullscreen {
-                ui.add_space(8.0);
-                info_banner(
+        summary_card(
+            &mut columns[0],
+            icons::KEY,
+            "Connection",
+            190.0,
+            colors,
+            |ui| {
+                detail_row(ui, "Computer", &profile.connection.host, colors);
+                detail_row(ui, "Port", &profile.connection.port.to_string(), colors);
+                detail_row(
                     ui,
-                    icons::LOCK,
-                    "Keyboard stays remote; the safety bar remains available.",
+                    "Username",
+                    value_or_dash(&profile.connection.username),
                     colors,
                 );
-            }
-        });
+                detail_row(
+                    ui,
+                    "Domain",
+                    value_or_dash(&profile.connection.domain),
+                    colors,
+                );
+            },
+        );
+        summary_card(
+            &mut columns[1],
+            icons::DISPLAY,
+            "Display",
+            190.0,
+            colors,
+            |ui| {
+                detail_row(
+                    ui,
+                    "Window mode",
+                    display_mode_name(profile.display.mode),
+                    colors,
+                );
+                let resolution = if profile.display.dynamic_resolution {
+                    "Dynamic — adapts to the window".to_owned()
+                } else if let Some(resolution) = profile.display.resolution {
+                    format!("{} × {} pixels", resolution.width, resolution.height)
+                } else {
+                    "Fixed".to_owned()
+                };
+                detail_row(ui, "Resolution", &resolution, colors);
+                if profile.display.mode == DisplayMode::Fullscreen {
+                    ui.add_space(8.0);
+                    info_banner(
+                        ui,
+                        icons::LOCK,
+                        "Keyboard stays remote; the safety bar remains available.",
+                        colors,
+                    );
+                }
+            },
+        );
     });
     ui.add_space(12.0);
-    summary_card(ui, icons::TUNE, "Resources", colors, |ui| {
+    summary_card(ui, icons::TUNE, "Resources", 80.0, colors, |ui| {
         ui.horizontal_wrapped(|ui| {
             if profile.resources.clipboard {
                 resource_chip(ui, icons::CLIPBOARD, "Clipboard", colors);
@@ -1179,7 +1228,7 @@ fn quick_connect_view(
             }
         });
     });
-    ui.add_space(16.0);
+    ui.add_space(10.0);
     settings_card(
         ui,
         icons::PLAY,
@@ -1193,6 +1242,7 @@ fn quick_connect_view(
                     ui.add(
                         egui::TextEdit::singleline(&mut draft.host)
                             .hint_text("workpc.example.com or 192.168.1.10")
+                            .margin(egui::Margin::symmetric(8, 5))
                             .desired_width(f32::INFINITY),
                     );
                 });
@@ -1205,6 +1255,7 @@ fn quick_connect_view(
                     ui.add(
                         egui::TextEdit::singleline(&mut draft.username)
                             .hint_text("Optional")
+                            .margin(egui::Margin::symmetric(8, 5))
                             .desired_width(f32::INFINITY),
                     );
                 });
@@ -1212,6 +1263,7 @@ fn quick_connect_view(
                     ui.add(
                         egui::TextEdit::singleline(&mut draft.domain)
                             .hint_text("Optional")
+                            .margin(egui::Margin::symmetric(8, 5))
                             .desired_width(f32::INFINITY),
                     );
                 });
@@ -1296,6 +1348,7 @@ fn quick_connect_view(
 fn profile_editor(
     ui: &mut egui::Ui,
     profile: &mut Profile,
+    section: &mut EditorSection,
     colors: Colors,
     displays: &DisplayCatalog,
 ) -> EditorAction {
@@ -1324,23 +1377,55 @@ fn profile_editor(
             }
         });
     });
-    ui.add_space(16.0);
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let tab_width = ((ui.available_width() - 14.0) / 3.0).max(120.0);
+        editor_tab(
+            ui,
+            icons::KEY,
+            "Connection",
+            section,
+            EditorSection::Connection,
+            tab_width,
+            colors,
+        );
+        editor_tab(
+            ui,
+            icons::DISPLAY,
+            "Display",
+            section,
+            EditorSection::Display,
+            tab_width,
+            colors,
+        );
+        editor_tab(
+            ui,
+            icons::TUNE,
+            "Resources",
+            section,
+            EditorSection::Resources,
+            tab_width,
+            colors,
+        );
+    });
+    ui.add_space(8.0);
     egui::ScrollArea::vertical()
         .id_salt("profile-editor")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.columns(2, |columns| {
+            if *section == EditorSection::Connection {
                 settings_card(
-                    &mut columns[0],
+                    ui,
                     icons::KEY,
                     "Connection",
                     "Where to connect and which account to use.",
-                    430.0,
+                    350.0,
                     colors,
                     |ui| {
                     labeled_field(ui, "Connection name", |ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut profile.name)
+                                .margin(egui::Margin::symmetric(8, 5))
                                 .desired_width(f32::INFINITY),
                         );
                     });
@@ -1348,6 +1433,7 @@ fn profile_editor(
                         ui.add(
                             egui::TextEdit::singleline(&mut profile.connection.host)
                                 .hint_text("workpc.example.com or 192.168.1.10")
+                                .margin(egui::Margin::symmetric(8, 5))
                                 .desired_width(f32::INFINITY),
                         );
                     });
@@ -1363,6 +1449,7 @@ fn profile_editor(
                             ui.add(
                                 egui::TextEdit::singleline(&mut profile.connection.domain)
                                     .hint_text("Optional")
+                                    .margin(egui::Margin::symmetric(8, 5))
                                     .desired_width(f32::INFINITY),
                             );
                         });
@@ -1371,6 +1458,7 @@ fn profile_editor(
                         ui.add(
                             egui::TextEdit::singleline(&mut profile.connection.username)
                                 .hint_text("Optional")
+                                .margin(egui::Margin::symmetric(8, 5))
                                 .desired_width(f32::INFINITY),
                         );
                     });
@@ -1383,12 +1471,14 @@ fn profile_editor(
                         colors,
                     );
                 });
+            }
+            if *section == EditorSection::Display {
                 settings_card(
-                    &mut columns[1],
+                    ui,
                     icons::DISPLAY,
                     "Display",
                     "Choose how the remote desktop fits this screen.",
-                    430.0,
+                    350.0,
                     colors,
                     |ui| {
                     field_label(ui, "Window mode", colors);
@@ -1412,7 +1502,7 @@ fn profile_editor(
                                 "Fullscreen with safety bar",
                             );
                         });
-                    ui.add_space(12.0);
+                    ui.add_space(8.0);
                     field_label(ui, "Resolution", colors);
                     ui.columns(2, |columns| {
                         if choice_card(
@@ -1445,7 +1535,7 @@ fn profile_editor(
                             .display
                             .resolution
                             .get_or_insert_with(|| displays.preferred_resolution());
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                         egui::ComboBox::from_id_salt("profile-resolution-preset")
                             .selected_text(resolution_label(*resolution, displays.current))
                             .width(ui.available_width())
@@ -1458,7 +1548,7 @@ fn profile_editor(
                                     );
                                 }
                             });
-                        ui.add_space(6.0);
+                        ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Custom").color(colors.muted));
                             ui.add(
@@ -1481,7 +1571,7 @@ fn profile_editor(
                             );
                         }
                     }
-                    ui.add_space(10.0);
+                    ui.add_space(7.0);
                     if profile.display.mode == DisplayMode::Fullscreen {
                         info_banner(
                             ui,
@@ -1498,9 +1588,9 @@ fn profile_editor(
                         );
                     }
                 });
-            });
-            ui.add_space(12.0);
-            settings_card(
+            }
+            if *section == EditorSection::Resources {
+                settings_card(
                 ui,
                 icons::TUNE,
                 "Resources",
@@ -1544,16 +1634,16 @@ fn profile_editor(
                         colors,
                     );
                 });
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 egui::Frame::new()
                     .fill(colors.bg)
                     .stroke(egui::Stroke::new(1.0, colors.border))
                     .corner_radius(egui::CornerRadius::same(6))
-                    .inner_margin(12)
+                    .inner_margin(9)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(icons::FOLDER_OPEN).size(20.0).color(colors.accent));
+                            ui.label(RichText::new(icons::FOLDER_OPEN).size(18.0).color(colors.accent));
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("Local folders").strong());
                                 ui.label(
@@ -1573,11 +1663,12 @@ fn profile_editor(
                         });
                         let mut remove = None;
                         for (index, drive) in profile.resources.drives.iter_mut().enumerate() {
-                            ui.add_space(8.0);
+                            ui.add_space(6.0);
                             ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut drive.name)
                                     .hint_text("Share name")
+                                    .margin(egui::Margin::symmetric(8, 5))
                                     .desired_width(170.0),
                             );
                             let mut path = drive.path.to_string_lossy().into_owned();
@@ -1585,6 +1676,7 @@ fn profile_editor(
                                 .add(
                                     egui::TextEdit::singleline(&mut path)
                                         .hint_text("/home/me/Documents")
+                                        .margin(egui::Margin::symmetric(8, 5))
                                         .desired_width(ui.available_width() - 48.0),
                                 )
                                 .changed()
@@ -1597,7 +1689,7 @@ fn profile_editor(
                         });
                         }
                         if profile.resources.drives.is_empty() {
-                            ui.add_space(10.0);
+                            ui.add_space(6.0);
                             ui.label(
                                 RichText::new("No local folders shared yet.")
                                     .color(colors.muted),
@@ -1607,7 +1699,8 @@ fn profile_editor(
                             profile.resources.drives.remove(index);
                         }
                     });
-            });
+                });
+            }
         });
     action
 }
@@ -1722,11 +1815,11 @@ fn editor_card(
         .fill(colors.raised)
         .stroke(egui::Stroke::new(1.0, colors.border))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(16)
+        .inner_margin(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             section_heading(ui, title, colors);
-            ui.add_space(5.0);
+            ui.add_space(4.0);
             content(ui);
         });
 }
@@ -1744,23 +1837,23 @@ fn settings_card(
         .fill(colors.panel)
         .stroke(egui::Stroke::new(1.0, colors.border))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(16)
+        .inner_margin(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_min_height(min_height);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon).size(22.0).color(colors.accent));
+                ui.label(RichText::new(icon).size(19.0).color(colors.accent));
                 ui.vertical(|ui| {
                     ui.label(
                         RichText::new(title)
-                            .size(17.0)
+                            .size(16.0)
                             .strong()
                             .color(colors.heading),
                     );
                     ui.label(RichText::new(description).small().color(colors.muted));
                 });
             });
-            ui.add_space(14.0);
+            ui.add_space(9.0);
             content(ui);
         });
 }
@@ -1769,6 +1862,7 @@ fn summary_card(
     ui: &mut egui::Ui,
     icon: &str,
     title: &str,
+    min_height: f32,
     colors: Colors,
     content: impl FnOnce(&mut egui::Ui),
 ) {
@@ -1776,20 +1870,20 @@ fn summary_card(
         .fill(colors.panel)
         .stroke(egui::Stroke::new(1.0, colors.border))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(16)
+        .inner_margin(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(230.0);
+            ui.set_min_height(min_height);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon).size(20.0).color(colors.accent));
+                ui.label(RichText::new(icon).size(18.0).color(colors.accent));
                 ui.label(
                     RichText::new(title)
-                        .size(16.0)
+                        .size(15.0)
                         .strong()
                         .color(colors.heading),
                 );
             });
-            ui.add_space(12.0);
+            ui.add_space(8.0);
             content(ui);
         });
 }
@@ -1814,10 +1908,46 @@ fn toolbar_button(ui: &mut egui::Ui, icon: &str, label: &str, colors: Colors) ->
     )
 }
 
+fn editor_tab(
+    ui: &mut egui::Ui,
+    icon: &str,
+    label: &str,
+    section: &mut EditorSection,
+    value: EditorSection,
+    width: f32,
+    colors: Colors,
+) {
+    let selected = *section == value;
+    let response = ui.add_sized(
+        [width, 36.0],
+        egui::Button::new(
+            RichText::new(format!("{icon}  {label}"))
+                .strong()
+                .color(if selected { Color32::WHITE } else { colors.dim }),
+        )
+        .fill(if selected {
+            colors.accent
+        } else {
+            colors.panel
+        })
+        .stroke(egui::Stroke::new(
+            1.0,
+            if selected {
+                colors.accent
+            } else {
+                colors.border
+            },
+        )),
+    );
+    if response.clicked() {
+        *section = value;
+    }
+}
+
 fn icon_button(ui: &mut egui::Ui, icon: &str, colors: Colors) -> egui::Response {
     ui.add_sized(
-        [38.0, 38.0],
-        egui::Button::new(RichText::new(icon).size(18.0).color(colors.dim))
+        [34.0, 34.0],
+        egui::Button::new(RichText::new(icon).size(17.0).color(colors.dim))
             .fill(colors.panel)
             .stroke(egui::Stroke::new(1.0, colors.border)),
     )
@@ -1831,10 +1961,10 @@ fn navigation_button(
     colors: Colors,
 ) -> egui::Response {
     ui.add_sized(
-        [ui.available_width(), 44.0],
+        [ui.available_width(), 38.0],
         egui::Button::new(
             RichText::new(format!("{icon}  {label}"))
-                .size(15.5)
+                .size(14.5)
                 .color(if selected { colors.heading } else { colors.dim }),
         )
         .selected(selected)
@@ -1869,11 +1999,11 @@ fn connection_row(
             },
         ))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(10, 8))
+        .inner_margin(egui::Margin::symmetric(9, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon).size(20.0).color(if selected {
+                ui.label(RichText::new(icon).size(18.0).color(if selected {
                     colors.accent
                 } else {
                     colors.dim
@@ -1896,15 +2026,15 @@ fn connection_row(
 }
 
 fn field_label(ui: &mut egui::Ui, label: &str, colors: Colors) {
-    ui.label(RichText::new(label).size(13.5).strong().color(colors.dim));
-    ui.add_space(2.0);
+    ui.label(RichText::new(label).size(12.5).strong().color(colors.dim));
+    ui.add_space(3.0);
 }
 
 fn labeled_field(ui: &mut egui::Ui, label: &str, content: impl FnOnce(&mut egui::Ui)) {
-    ui.label(RichText::new(label).size(13.5).strong());
-    ui.add_space(2.0);
+    ui.label(RichText::new(label).size(12.5).strong());
+    ui.add_space(3.0);
     content(ui);
-    ui.add_space(6.0);
+    ui.add_space(5.0);
 }
 
 fn setting_toggle_row(
@@ -1930,19 +2060,29 @@ fn setting_toggle_row(
             },
         ))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(12, 10))
+        .inner_margin(egui::Margin::symmetric(9, 7))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon).size(21.0).color(if *enabled {
+                ui.label(RichText::new(icon).size(18.0).color(if *enabled {
                     colors.accent
                 } else {
                     colors.muted
                 }));
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(title).strong().color(colors.text));
-                    ui.label(RichText::new(description).small().color(colors.muted));
-                });
+                let text_width = (ui.available_width() - 48.0).max(80.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(text_width, 0.0),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.label(RichText::new(title).strong().color(colors.text));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(description).small().color(colors.muted),
+                            )
+                            .wrap(),
+                        );
+                    },
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     toggle_switch(ui, *enabled, colors);
                 });
@@ -1963,16 +2103,16 @@ fn setting_toggle_row(
 }
 
 fn toggle_switch(ui: &mut egui::Ui, enabled: bool, colors: Colors) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(40.0, 22.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(34.0, 19.0), egui::Sense::hover());
     let track = if enabled {
         colors.accent
     } else {
         colors.raised
     };
-    ui.painter().rect_filled(rect, 11.0, track);
+    ui.painter().rect_filled(rect, 10.0, track);
     ui.painter().rect_stroke(
         rect,
-        11.0,
+        10.0,
         egui::Stroke::new(
             1.0,
             if enabled {
@@ -1984,12 +2124,12 @@ fn toggle_switch(ui: &mut egui::Ui, enabled: bool, colors: Colors) {
         egui::StrokeKind::Inside,
     );
     let center_x = if enabled {
-        rect.right() - 11.0
+        rect.right() - 9.5
     } else {
-        rect.left() + 11.0
+        rect.left() + 9.5
     };
     ui.painter()
-        .circle_filled(egui::pos2(center_x, rect.center().y), 7.0, Color32::WHITE);
+        .circle_filled(egui::pos2(center_x, rect.center().y), 6.0, Color32::WHITE);
 }
 
 fn choice_card(
@@ -2014,7 +2154,7 @@ fn choice_card(
             },
         ))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(10)
+        .inner_margin(8)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -2045,11 +2185,11 @@ fn info_banner(ui: &mut egui::Ui, icon: &str, text: &str, colors: Colors) {
     egui::Frame::new()
         .fill(colors.accent_dim)
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(10)
+        .inner_margin(8)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon).size(17.0).color(colors.accent));
+                ui.label(RichText::new(icon).size(16.0).color(colors.accent));
                 ui.add(egui::Label::new(RichText::new(text).small().color(colors.dim)).wrap());
             });
         });
@@ -2062,6 +2202,7 @@ fn port_input(ui: &mut egui::Ui, port: &mut u16, id: egui::Id) {
     let response = ui.add(
         egui::TextEdit::singleline(&mut text)
             .id(id)
+            .margin(egui::Margin::symmetric(8, 5))
             .desired_width(f32::INFINITY)
             .char_limit(5),
     );
@@ -2105,11 +2246,11 @@ fn resource_chip(ui: &mut egui::Ui, icon: &str, label: &str, colors: Colors) {
         .fill(colors.accent_dim)
         .stroke(egui::Stroke::new(1.0, colors.accent))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.label(
                 RichText::new(format!("{icon}  {label}"))
-                    .size(13.5)
+                    .size(12.5)
                     .color(colors.text),
             );
         });
@@ -2157,5 +2298,9 @@ fn theme_name(mode: ThemeMode) -> &'static str {
 
 fn show_main_window(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    if !desktop::set_window_minimized(std::process::id(), false) {
+        tracing::debug!("KWin restore was unavailable; used the native viewport request");
+    }
 }

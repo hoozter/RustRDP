@@ -35,7 +35,7 @@ impl ksni::Tray for RustRdpTray {
     }
 
     fn icon_name(&self) -> String {
-        "krdc".to_owned()
+        "rustrdp".to_owned()
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {

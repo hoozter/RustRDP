@@ -1,8 +1,8 @@
+use crate::desktop;
 use crate::freerdp::ConnectionCommand;
 use crate::model::Profile;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::collections::BTreeMap;
-use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -264,6 +264,9 @@ fn watch_process(
     events: Sender<Event>,
     mut controller: Option<ControllerServer>,
 ) {
+    if let Some(controller) = controller.as_mut() {
+        controller.remote_pid = Some(child.id());
+    }
     let output_reader = stderr.map(|stderr| thread::spawn(move || read_bounded(stderr)));
     let started = Instant::now();
     let mut announced_active = false;
@@ -276,7 +279,12 @@ fn watch_process(
         if let Some(controller) = controller.as_mut() {
             match controller.poll() {
                 ControllerAction::None | ControllerAction::Ready => {}
-                ControllerAction::Minimize => minimize_window(child.id()),
+                ControllerAction::Minimize => {
+                    desktop::set_window_minimized(child.id(), true);
+                }
+                ControllerAction::OpenApp => {
+                    desktop::set_window_minimized(std::process::id(), false);
+                }
                 ControllerAction::Disconnect => {
                     requested_disconnect = true;
                     let _ = child.kill();
@@ -308,13 +316,21 @@ enum ControllerAction {
     None,
     Ready,
     Minimize,
+    OpenApp,
     Disconnect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ControllerRequest {
+    Action(ControllerAction),
+    State,
 }
 
 struct ControllerServer {
     listener: TcpListener,
     process: Child,
     route_prefix: String,
+    remote_pid: Option<u32>,
 }
 
 impl ControllerServer {
@@ -343,6 +359,7 @@ impl ControllerServer {
             listener,
             process,
             route_prefix,
+            remote_pid: None,
         };
         controller.wait_until_ready()?;
         Ok(controller)
@@ -355,11 +372,16 @@ impl ControllerServer {
         let Ok((mut stream, _)) = self.listener.accept() else {
             return ControllerAction::None;
         };
-        let action = read_controller_action(&mut stream, &self.route_prefix);
-        let _ = stream.write_all(
-            b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
-        );
-        action
+        match read_controller_request(&mut stream, &self.route_prefix) {
+            ControllerRequest::State => {
+                write_controller_state(&mut stream, self.remote_pid);
+                ControllerAction::None
+            }
+            ControllerRequest::Action(action) => {
+                write_no_content(&mut stream);
+                action
+            }
+        }
     }
 
     fn wait_until_ready(&mut self) -> io::Result<()> {
@@ -374,12 +396,14 @@ impl ControllerServer {
                 thread::sleep(Duration::from_millis(10));
                 continue;
             };
-            let action = read_controller_action(&mut stream, &self.route_prefix);
-            let _ = stream.write_all(
-                b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
-            );
-            if action == ControllerAction::Ready {
-                return Ok(());
+            match read_controller_request(&mut stream, &self.route_prefix) {
+                ControllerRequest::State => write_controller_state(&mut stream, self.remote_pid),
+                ControllerRequest::Action(action) => {
+                    write_no_content(&mut stream);
+                    if action == ControllerAction::Ready {
+                        return Ok(());
+                    }
+                }
             }
         }
         Err(io::Error::new(
@@ -396,31 +420,50 @@ impl Drop for ControllerServer {
     }
 }
 
-fn read_controller_action(stream: &mut TcpStream, route_prefix: &str) -> ControllerAction {
+fn read_controller_request(stream: &mut TcpStream, route_prefix: &str) -> ControllerRequest {
     let mut request = [0_u8; 2048];
     let Ok(count) = stream.read(&mut request) else {
-        return ControllerAction::None;
+        return ControllerRequest::Action(ControllerAction::None);
     };
-    controller_action_from_request(&String::from_utf8_lossy(&request[..count]), route_prefix)
+    controller_request_from_text(&String::from_utf8_lossy(&request[..count]), route_prefix)
 }
 
-fn controller_action_from_request(request: &str, route_prefix: &str) -> ControllerAction {
-    let Some(path) = request
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-    else {
-        return ControllerAction::None;
+fn controller_request_from_text(request: &str, route_prefix: &str) -> ControllerRequest {
+    let Some((method, path)) = request.lines().next().and_then(|line| {
+        let mut fields = line.split_whitespace();
+        Some((fields.next()?, fields.next()?))
+    }) else {
+        return ControllerRequest::Action(ControllerAction::None);
     };
-    if path == format!("{route_prefix}/ready") {
-        ControllerAction::Ready
-    } else if path == format!("{route_prefix}/minimize") {
-        ControllerAction::Minimize
-    } else if path == format!("{route_prefix}/disconnect") {
-        ControllerAction::Disconnect
+    if method == "GET" && path == format!("{route_prefix}/state") {
+        ControllerRequest::State
+    } else if method == "POST" && path == format!("{route_prefix}/ready") {
+        ControllerRequest::Action(ControllerAction::Ready)
+    } else if method == "POST" && path == format!("{route_prefix}/minimize") {
+        ControllerRequest::Action(ControllerAction::Minimize)
+    } else if method == "POST" && path == format!("{route_prefix}/open-app") {
+        ControllerRequest::Action(ControllerAction::OpenApp)
+    } else if method == "POST" && path == format!("{route_prefix}/disconnect") {
+        ControllerRequest::Action(ControllerAction::Disconnect)
     } else {
-        ControllerAction::None
+        ControllerRequest::Action(ControllerAction::None)
     }
+}
+
+fn write_no_content(stream: &mut TcpStream) {
+    let _ = stream.write_all(
+        b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+    );
+}
+
+fn write_controller_state(stream: &mut TcpStream, remote_pid: Option<u32>) {
+    let body = format!("{{\"pid\":{}}}", remote_pid.unwrap_or(0));
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes());
 }
 
 fn controller_qml_path() -> Option<PathBuf> {
@@ -436,37 +479,6 @@ fn controller_qml_path() -> Option<PathBuf> {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/session-controller.qml");
         development.is_file().then_some(development)
     }
-}
-
-fn minimize_window(pid: u32) {
-    let plugin = format!("rustrdp-minimize-{}", Uuid::new_v4().simple());
-    let script_path = std::env::temp_dir().join(format!("{plugin}.js"));
-    let script = format!(
-        "for (const window of workspace.windowList()) {{\n\
-         if (window.pid === {pid}) {{ window.minimized = true; break; }}\n\
-         }}\n\
-         callDBus('org.kde.KWin', '/Scripting', 'org.kde.kwin.Scripting', \
-         'unloadScript', '{plugin}');\n"
-    );
-    if fs::write(&script_path, script).is_err() {
-        return;
-    }
-    let loaded = Command::new("qdbus6")
-        .args([
-            "org.kde.KWin",
-            "/Scripting",
-            "org.kde.kwin.Scripting.loadScript",
-        ])
-        .arg(&script_path)
-        .arg(&plugin)
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if loaded {
-        let _ = Command::new("qdbus6")
-            .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"])
-            .status();
-    }
-    let _ = fs::remove_file(script_path);
 }
 
 fn read_bounded(mut stderr: impl Read) -> String {
@@ -616,30 +628,42 @@ mod tests {
     fn controller_accepts_only_its_private_routes() {
         let prefix = "/private-token";
         assert_eq!(
-            controller_action_from_request("POST /private-token/ready HTTP/1.1\r\n", prefix),
-            ControllerAction::Ready
+            controller_request_from_text("POST /private-token/ready HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::Ready)
         );
         assert_eq!(
-            controller_action_from_request("POST /private-token/minimize HTTP/1.1\r\n", prefix),
-            ControllerAction::Minimize
+            controller_request_from_text("POST /private-token/minimize HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::Minimize)
         );
         assert_eq!(
-            controller_action_from_request("POST /private-token/disconnect HTTP/1.1\r\n", prefix),
-            ControllerAction::Disconnect
+            controller_request_from_text("POST /private-token/open-app HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::OpenApp)
         );
         assert_eq!(
-            controller_action_from_request("POST /wrong/disconnect HTTP/1.1\r\n", prefix),
-            ControllerAction::None
+            controller_request_from_text("POST /private-token/disconnect HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::Disconnect)
+        );
+        assert_eq!(
+            controller_request_from_text("GET /private-token/state HTTP/1.1\r\n", prefix),
+            ControllerRequest::State
+        );
+        assert_eq!(
+            controller_request_from_text("POST /wrong/disconnect HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::None)
         );
     }
 
     #[test]
     fn controller_uses_the_wayland_overlay_layer() {
         let qml = include_str!("../assets/session-controller.qml");
-        assert!(qml.contains("visible: true"));
+        assert!(qml.contains("org.kde.taskmanager"));
         assert!(qml.contains("LayerShell.Window.LayerOverlay"));
         assert!(qml.contains("KeyboardInteractivityNone"));
+        assert!(qml.contains("collapsedHeight"));
+        assert!(qml.contains("IsActive"));
+        assert!(qml.contains("IsMinimized"));
         assert!(qml.contains("sendCommand(\"minimize\")"));
+        assert!(qml.contains("sendCommand(\"open-app\")"));
         assert!(qml.contains("sendCommand(\"disconnect\")"));
     }
 

@@ -24,11 +24,13 @@ scaling on Wayland.
   process arguments or the profile file.
 - Optional Secret Service storage (KWallet, GNOME Keyring, or compatible wallet).
 - StatusNotifierItem tray menu, XDG autostart, multiple sessions, useful error
-  messages, and per-session floating controls.
+  messages, and an auto-hiding per-session safety bar with open-app, minimize,
+  pin, and disconnect controls.
 
 ## Requirements
 
-- KDE Plasma 6 on Wayland, including Qt 6 QML and Layer Shell Qt.
+- KDE Plasma 6 on Wayland, including Qt 6 QML and Layer Shell Qt, for the full
+  safe-fullscreen experience and reliable close-to-tray restoration.
 - The FreeRDP SDL3 client (`freerdp-sdl` on Debian/Ubuntu-family systems).
 - A Secret Service provider if saved passwords are desired.
 - Rust 1.85 or newer to build from source.
@@ -57,6 +59,18 @@ For a user-local installation with no root access:
 This installs the binary, desktop entry, and icon under `~/.local`. Log out and
 back in, or refresh the application launcher, if it does not appear immediately.
 
+## Application icon
+
+`assets/rustrdp.svg` is the single source for RustRDP branding. It is used by
+the desktop launcher and tray, while the generated `assets/rustrdp.png` is
+embedded in the application window and taskbar metadata. To install a new logo,
+replace the SVG, regenerate the embedded PNG, then rebuild:
+
+```sh
+./scripts/render-icons.sh
+./scripts/install-local.sh
+```
+
 ## Data and security
 
 Profiles and settings are written atomically to the XDG configuration directory
@@ -65,6 +79,21 @@ schema is versioned and fails closed on newer unsupported versions. Passwords
 are stored only in Secret Service and are supplied to FreeRDP using
 `/from-stdin:force`; diagnostics are bounded and credential-related lines are
 redacted.
+
+## Desktop compatibility
+
+The connection manager and FreeRDP launch path use portable Linux components
+and can run on other Wayland or X11 desktops. Clipboard, printers, audio,
+microphone, folders, profile storage, and the ordinary FreeRDP window modes do
+not inherently require KDE.
+
+Two integrations are intentionally Plasma-specific today: the layer-shell
+safety bar uses KDE's Layer Shell Qt and task model, and restoring a hidden app
+or remote window uses KWin scripting. Other desktops may also lack a
+StatusNotifier/AppIndicator tray host. RustRDP therefore supports its complete
+safe-fullscreen and close-to-tray behavior on KDE Plasma; on GNOME, wlroots
+compositors, and other desktops those two features need a desktop-specific
+backend before they can be considered reliable.
 
 ## Current scope
 
