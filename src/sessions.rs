@@ -20,6 +20,9 @@ pub struct Session {
     pub profile_name: String,
     pub pid: u32,
     pub state: SessionState,
+    profile: Profile,
+    used_saved_credential: bool,
+    credential_failure_handled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,10 +35,21 @@ pub enum SessionState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionExit {
+    pub kind: SessionExitKind,
     pub code: Option<i32>,
     pub title: String,
     pub message: String,
     pub technical_details: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionExitKind {
+    Normal,
+    Disconnected,
+    Authentication,
+    Certificate,
+    Connectivity,
+    Unexpected,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -96,6 +110,7 @@ impl SessionManager {
         profile: &Profile,
         connection: ConnectionCommand,
         mut password: Option<String>,
+        used_saved_credential: bool,
     ) -> Result<Uuid, SessionError> {
         let mut command = Command::new(&connection.program);
         command
@@ -156,6 +171,9 @@ impl SessionManager {
                 profile_name: profile.name.clone(),
                 pid,
                 state: SessionState::Connecting,
+                profile: profile.clone(),
+                used_saved_credential,
+                credential_failure_handled: false,
             },
         );
         Ok(id)
@@ -206,6 +224,24 @@ impl SessionManager {
         {
             self.sessions.remove(&session_id);
         }
+    }
+
+    pub fn take_saved_credential_failure(&mut self) -> Option<Profile> {
+        self.sessions.values_mut().find_map(|session| {
+            let rejected = session.used_saved_credential
+                && !session.credential_failure_handled
+                && matches!(
+                    session.state,
+                    SessionState::Exited(SessionExit {
+                        kind: SessionExitKind::Authentication,
+                        ..
+                    })
+                );
+            rejected.then(|| {
+                session.credential_failure_handled = true;
+                session.profile.clone()
+            })
+        })
     }
 }
 
@@ -283,43 +319,64 @@ fn redact_diagnostics(text: &str) -> String {
 
 fn classify_exit(code: Option<i32>, technical: &str, requested_disconnect: bool) -> SessionExit {
     let lower = technical.to_ascii_lowercase();
-    let (title, message) = if requested_disconnect {
+    let (kind, title, message) = if requested_disconnect {
         (
+            SessionExitKind::Disconnected,
             "Session disconnected",
             "The remote desktop session was closed.",
         )
-    } else if lower.contains("logon_failure") || lower.contains("authentication failed") {
+    } else if lower.contains("logon_failure")
+        || lower.contains("status_wrong_password")
+        || lower.contains("authentication failed")
+    {
         (
+            SessionExitKind::Authentication,
             "Sign-in failed",
             "Check the username, domain, and password, then try again.",
         )
-    } else if lower.contains("certificate") {
+    } else if lower.contains("host key verification failed")
+        || lower.contains("remote host identification has changed")
+        || (lower.contains("host key for") && lower.contains("has changed"))
+        || lower.contains("certificate not trusted, aborting")
+        || lower.contains("certificate rejected")
+    {
         (
-            "Certificate problem",
-            "FreeRDP could not verify the remote computer's certificate.",
+            SessionExitKind::Certificate,
+            "Remote identity changed",
+            "The remote computer's identity changed. Verify it before reconnecting.",
         )
     } else if lower.contains("name or service not known") || lower.contains("getaddrinfo") {
         (
+            SessionExitKind::Connectivity,
             "Remote computer not found",
             "Check the hostname or IP address and your network connection.",
         )
-    } else if lower.contains("connect failed") || lower.contains("connection refused") {
+    } else if lower.contains("connect failed")
+        || lower.contains("connection refused")
+        || lower.contains("errconnect_connect_transport_failed")
+        || lower.contains("failed to connect")
+        || lower.contains("bio_read retries exceeded")
+    {
         (
+            SessionExitKind::Connectivity,
             "Could not reach the remote computer",
             "Check that it is online and accepts Remote Desktop connections.",
         )
     } else if code == Some(0) {
         (
+            SessionExitKind::Normal,
             "Session ended",
             "The remote desktop session ended normally.",
         )
     } else {
         (
+            SessionExitKind::Unexpected,
             "Session ended unexpectedly",
             "FreeRDP closed before the session completed.",
         )
     };
     SessionExit {
+        kind,
         code,
         title: title.to_owned(),
         message: message.to_owned(),
@@ -342,6 +399,32 @@ mod tests {
     }
 
     #[test]
+    fn routine_self_signed_warning_is_not_misclassified_as_certificate_rejection() {
+        let technical = "Certificate verification failure 'self-signed certificate (18)'\n\
+                         CN = workstation.example.com\n\
+                         ERRCONNECT_CONNECT_TRANSPORT_FAILED";
+        let exit = classify_exit(Some(1), technical, false);
+        assert_eq!(exit.kind, SessionExitKind::Connectivity);
+        assert_eq!(exit.title, "Could not reach the remote computer");
+    }
+
+    #[test]
+    fn explicit_host_key_rejection_is_a_certificate_failure() {
+        let technical = "The host key for workstation:3389 has changed\n\
+                         REMOTE HOST IDENTIFICATION HAS CHANGED\n\
+                         Host key verification failed\n\
+                         certificate not trusted, aborting";
+        let exit = classify_exit(Some(1), technical, false);
+        assert_eq!(exit.kind, SessionExitKind::Certificate);
+    }
+
+    #[test]
+    fn status_logon_failure_is_an_authentication_failure() {
+        let exit = classify_exit(Some(1), "SPNEGO received STATUS_LOGON_FAILURE", false);
+        assert_eq!(exit.kind, SessionExitKind::Authentication);
+    }
+
+    #[test]
     fn drains_large_diagnostics_while_bounding_retained_output() {
         let input = vec![b'x'; MAX_TECHNICAL_OUTPUT + 16_384];
         let output = read_bounded(std::io::Cursor::new(input));
@@ -358,7 +441,7 @@ mod tests {
             password_via_stdin: false,
         };
         let mut manager = SessionManager::default();
-        let id = manager.launch(&profile, command, None).unwrap();
+        let id = manager.launch(&profile, command, None, false).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             manager.poll();
@@ -371,5 +454,28 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         panic!("child process exit was not observed");
+    }
+
+    #[test]
+    fn reports_a_saved_credential_failure_only_once() {
+        let profile = Profile::default();
+        let id = Uuid::new_v4();
+        let mut manager = SessionManager::default();
+        manager.sessions.insert(
+            id,
+            Session {
+                id,
+                profile_id: profile.id,
+                profile_name: profile.name.clone(),
+                pid: 123,
+                state: SessionState::Exited(classify_exit(Some(1), "STATUS_LOGON_FAILURE", false)),
+                profile: profile.clone(),
+                used_saved_credential: true,
+                credential_failure_handled: false,
+            },
+        );
+
+        assert_eq!(manager.take_saved_credential_failure(), Some(profile));
+        assert!(manager.take_saved_credential_failure().is_none());
     }
 }

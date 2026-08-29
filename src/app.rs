@@ -257,7 +257,7 @@ impl RustRdpApp {
         }
         if allow_remember && profile.connection.save_password {
             match CredentialStore::retrieve(&profile.credential_id()) {
-                Ok(password) => self.launch(profile, Some(password)),
+                Ok(password) => self.launch(profile, Some(password), true),
                 Err(error) => {
                     self.password_prompt = Some(PasswordPrompt {
                         profile,
@@ -299,7 +299,7 @@ impl RustRdpApp {
         self.draft = Some(connection.to_profile());
     }
 
-    fn launch(&mut self, profile: Profile, password: Option<String>) {
+    fn launch(&mut self, profile: Profile, password: Option<String>, used_saved_credential: bool) {
         let backend = match &self.backend {
             Ok(backend) => backend,
             Err(error) => {
@@ -319,7 +319,10 @@ impl RustRdpApp {
             command = %command.display_redacted(),
             "starting remote desktop session"
         );
-        match self.sessions.launch(&profile, command, password) {
+        match self
+            .sessions
+            .launch(&profile, command, password, used_saved_credential)
+        {
             Ok(_) => {
                 self.success(format!("Connecting to {}…", profile.name));
                 self.update_tray();
@@ -758,10 +761,10 @@ impl RustRdpApp {
                     }
                 }
             }
-            self.launch(profile, Some(password));
+            self.launch(profile, Some(password), false);
         } else if connect_without {
             prompt.password.zeroize();
-            self.launch(profile, None);
+            self.launch(profile, None, false);
         } else if keep_open {
             self.password_prompt = Some(prompt);
         } else {
@@ -915,6 +918,19 @@ impl eframe::App for RustRdpApp {
         self.process_tray_actions(&ctx);
         if self.sessions.poll() {
             self.update_tray();
+        }
+        if let Some(profile) = self.sessions.take_saved_credential_failure() {
+            self.password_prompt = Some(PasswordPrompt {
+                profile,
+                allow_remember: true,
+                password: String::new(),
+                remember: true,
+                visible: false,
+                error: Some(
+                    "The saved password was rejected. Enter the current password to replace it."
+                        .to_owned(),
+                ),
+            });
         }
         if ctx.input(|input| input.viewport().close_requested())
             && !self.quitting
@@ -1448,7 +1464,7 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
             ui.label(RichText::new("●").color(color));
             ui.label(RichText::new(&name).strong());
             ui.label(RichText::new(format!("{label} · PID {pid}")).color(colors.muted));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| match state {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| match &state {
                 SessionState::Connecting | SessionState::Active => {
                     if ui.button("Disconnect").clicked() {
                         disconnect = Some(id);
@@ -1458,11 +1474,25 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
                     if ui.button("Dismiss").clicked() {
                         dismiss = Some(id);
                     }
-                    ui.label(RichText::new(exit.message).small().color(colors.dim));
+                    ui.label(RichText::new(&exit.message).small().color(colors.dim));
                 }
                 SessionState::Disconnecting => {}
             });
         });
+        if let SessionState::Exited(exit) = &state
+            && !exit.technical_details.is_empty()
+        {
+            egui::CollapsingHeader::new("Technical details")
+                .id_salt(("session-details", id))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(&exit.technical_details)
+                            .monospace()
+                            .small()
+                            .color(colors.dim),
+                    );
+                });
+        }
         ui.separator();
         ui.add_space(5.0);
     }
