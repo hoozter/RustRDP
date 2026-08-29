@@ -2,7 +2,7 @@ use crate::autostart;
 use crate::credentials::CredentialStore;
 use crate::freerdp::FreeRdpBackend;
 use crate::icons;
-use crate::model::{AppData, DisplayMode, Drive, Profile, Resolution, ThemeMode};
+use crate::model::{AppData, DisplayMode, Drive, Profile, QuickConnection, Resolution, ThemeMode};
 use crate::sessions::{SessionManager, SessionState};
 use crate::storage;
 use crate::theme::{self, Colors};
@@ -21,6 +21,8 @@ pub struct RustRdpApp {
     sessions: SessionManager,
     selected: Option<Uuid>,
     draft: Option<Profile>,
+    main_view: MainView,
+    quick_draft: QuickConnection,
     search: String,
     show_settings: bool,
     password_prompt: Option<PasswordPrompt>,
@@ -33,7 +35,8 @@ pub struct RustRdpApp {
 }
 
 struct PasswordPrompt {
-    profile_id: Uuid,
+    profile: Profile,
+    allow_remember: bool,
     password: String,
     remember: bool,
     visible: bool,
@@ -58,6 +61,20 @@ enum EditorAction {
     Connect,
 }
 
+enum QuickAction {
+    None,
+    Connect(QuickConnection),
+    Save(QuickConnection),
+    Load(QuickConnection),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MainView {
+    #[default]
+    Connections,
+    QuickConnect,
+}
+
 impl RustRdpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config_path = storage::default_config_path().ok();
@@ -70,6 +87,11 @@ impl RustRdpApp {
             ),
         };
         let colors = theme::apply(&cc.egui_ctx, data.settings.theme);
+        let main_view = if data.profiles.is_empty() {
+            MainView::QuickConnect
+        } else {
+            MainView::Connections
+        };
         let backend = FreeRdpBackend::detect().map_err(|error| error.to_string());
         let (tray_tx, tray_actions) = unbounded();
         let tray = match TrayIntegration::start(tray_tx, &data.profiles) {
@@ -87,6 +109,8 @@ impl RustRdpApp {
             sessions: SessionManager::default(),
             selected,
             draft: None,
+            main_view,
+            quick_draft: QuickConnection::default(),
             search: String::new(),
             show_settings: false,
             password_prompt: None,
@@ -151,11 +175,13 @@ impl RustRdpApp {
     }
 
     fn begin_new(&mut self) {
+        self.main_view = MainView::Connections;
         self.selected = None;
         self.draft = Some(Profile::default());
     }
 
     fn begin_edit(&mut self, profile_id: Uuid) {
+        self.main_view = MainView::Connections;
         self.selected = Some(profile_id);
         self.draft = self
             .data
@@ -221,16 +247,21 @@ impl RustRdpApp {
             self.error("Connection not found");
             return;
         };
+        self.request_connect_profile(profile, true);
+    }
+
+    fn request_connect_profile(&mut self, profile: Profile, allow_remember: bool) {
         if let Err(error) = profile.validate() {
             self.error(error.to_string());
             return;
         }
-        if profile.connection.save_password {
+        if allow_remember && profile.connection.save_password {
             match CredentialStore::retrieve(&profile.credential_id()) {
                 Ok(password) => self.launch(profile, Some(password)),
                 Err(error) => {
                     self.password_prompt = Some(PasswordPrompt {
-                        profile_id,
+                        profile,
+                        allow_remember,
                         password: String::new(),
                         remember: true,
                         visible: false,
@@ -240,13 +271,32 @@ impl RustRdpApp {
             }
         } else {
             self.password_prompt = Some(PasswordPrompt {
-                profile_id,
+                profile,
+                allow_remember,
                 password: String::new(),
                 remember: false,
                 visible: false,
                 error: None,
             });
         }
+    }
+
+    fn connect_quick(&mut self, connection: QuickConnection) {
+        let profile = connection.to_profile();
+        if let Err(error) = profile.validate() {
+            self.error(error.to_string());
+            return;
+        }
+        self.quick_draft = connection.clone();
+        self.data.record_recent(connection);
+        self.persist();
+        self.request_connect_profile(profile, false);
+    }
+
+    fn save_quick_as_profile(&mut self, connection: QuickConnection) {
+        self.main_view = MainView::Connections;
+        self.selected = None;
+        self.draft = Some(connection.to_profile());
     }
 
     fn launch(&mut self, profile: Profile, password: Option<String>) {
@@ -342,11 +392,25 @@ impl RustRdpApp {
     fn show_library(&mut self, root: &mut egui::Ui) -> Option<Uuid> {
         let mut connect = None;
         root.vertical(|ui| {
+            ui.heading("Connections");
+            ui.add_space(5.0);
+            let quick_selected = self.main_view == MainView::QuickConnect;
+            if ui
+                .selectable_label(quick_selected, format!("{}  Quick connect", icons::PLAY))
+                .on_hover_text("Connect without creating a saved profile")
+                .clicked()
+            {
+                self.main_view = MainView::QuickConnect;
+                self.draft = None;
+            }
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(5.0);
             ui.horizontal(|ui| {
-                ui.heading("Connections");
+                ui.label(RichText::new("Saved connections").strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
-                        .button(format!("{}  New", icons::ADD))
+                        .button(icons::ADD)
                         .on_hover_text("Create a connection")
                         .clicked()
                     {
@@ -401,13 +465,14 @@ impl RustRdpApp {
                         icons::DESKTOP
                     };
                     let response = ui.selectable_label(
-                        selected,
+                        selected && self.main_view == MainView::Connections,
                         format!(
                             "{marker}  {}\n    {}",
                             profile.name, profile.connection.host
                         ),
                     );
                     if response.clicked() {
+                        self.main_view = MainView::Connections;
                         self.selected = Some(profile.id);
                         self.draft = None;
                     }
@@ -423,8 +488,16 @@ impl RustRdpApp {
     fn show_main_content(&mut self, root: &mut egui::Ui) {
         let mut editor_action = EditorAction::None;
         let mut summary_action = SummaryAction::None;
+        let mut quick_action = QuickAction::None;
         root.add_space(12.0);
-        if let Some(draft) = self.draft.as_mut() {
+        if self.main_view == MainView::QuickConnect {
+            quick_action = quick_connect_view(
+                root,
+                &mut self.quick_draft,
+                &self.data.recent_connections,
+                self.colors,
+            );
+        } else if let Some(draft) = self.draft.as_mut() {
             editor_action = profile_editor(root, draft, self.colors);
         } else if let Some(profile) = self.selected_profile() {
             summary_action = profile_summary(root, profile, self.colors);
@@ -433,6 +506,12 @@ impl RustRdpApp {
         }
         root.add_space(16.0);
         session_list(root, &mut self.sessions, self.colors);
+        match quick_action {
+            QuickAction::None => {}
+            QuickAction::Connect(connection) => self.connect_quick(connection),
+            QuickAction::Save(connection) => self.save_quick_as_profile(connection),
+            QuickAction::Load(connection) => self.quick_draft = connection,
+        }
         match editor_action {
             EditorAction::None => {}
             EditorAction::Save => {
@@ -587,15 +666,7 @@ impl RustRdpApp {
         let Some(mut prompt) = self.password_prompt.take() else {
             return;
         };
-        let profile = self
-            .data
-            .profiles
-            .iter()
-            .find(|profile| profile.id == prompt.profile_id)
-            .cloned();
-        let Some(profile) = profile else {
-            return;
-        };
+        let profile = prompt.profile.clone();
         let mut keep_open = true;
         let mut connect = false;
         let mut connect_without = false;
@@ -642,7 +713,9 @@ impl RustRdpApp {
                         prompt.visible = !prompt.visible;
                     }
                 });
-                ui.checkbox(&mut prompt.remember, "Save securely in the desktop wallet");
+                if prompt.allow_remember {
+                    ui.checkbox(&mut prompt.remember, "Save securely in the desktop wallet");
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
@@ -664,7 +737,7 @@ impl RustRdpApp {
             });
         if connect {
             let password = std::mem::take(&mut prompt.password);
-            if prompt.remember {
+            if prompt.allow_remember && prompt.remember {
                 match CredentialStore::store(&profile.credential_id(), &password) {
                     Ok(()) => {
                         if let Some(saved_profile) = self
@@ -1006,150 +1079,342 @@ fn profile_summary(ui: &mut egui::Ui, profile: &Profile, colors: Colors) -> Summ
     action
 }
 
+fn quick_connect_view(
+    ui: &mut egui::Ui,
+    draft: &mut QuickConnection,
+    recent: &[QuickConnection],
+    colors: Colors,
+) -> QuickAction {
+    let mut action = QuickAction::None;
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.heading("Quick connect");
+            ui.label(
+                RichText::new(
+                    "Test a computer now. Save it as a connection whenever it is useful.",
+                )
+                .color(colors.dim),
+            );
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let can_connect = !draft.host.trim().is_empty();
+            if ui
+                .add_enabled(
+                    can_connect,
+                    egui::Button::new(
+                        RichText::new(format!("{}  Connect", icons::PLAY)).color(Color32::WHITE),
+                    )
+                    .fill(colors.accent),
+                )
+                .clicked()
+            {
+                action = QuickAction::Connect(draft.clone());
+            }
+            if ui
+                .add_enabled(
+                    can_connect,
+                    egui::Button::new(format!("{}  Save as connection", icons::ADD)),
+                )
+                .clicked()
+            {
+                action = QuickAction::Save(draft.clone());
+            }
+        });
+    });
+    ui.add_space(12.0);
+    editor_card(ui, "Computer", colors, |ui| {
+        field_row(ui, "Host", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.host)
+                    .hint_text("workpc.example.com or 192.168.1.10")
+                    .desired_width(360.0),
+            );
+        });
+        field_row(ui, "Port", |ui| {
+            ui.add(egui::DragValue::new(&mut draft.port).range(1..=65535));
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Username").small().color(colors.muted));
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.username)
+                        .hint_text("Optional")
+                        .desired_width(240.0),
+                );
+            });
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Domain").small().color(colors.muted));
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.domain)
+                        .hint_text("Optional")
+                        .desired_width(180.0),
+                );
+            });
+        });
+    });
+
+    ui.add_space(14.0);
+    ui.label(RichText::new("Recent").strong().color(colors.heading));
+    ui.label(
+        RichText::new("Your latest quick connections are kept here without passwords.")
+            .small()
+            .color(colors.muted),
+    );
+    ui.add_space(6.0);
+    if recent.is_empty() {
+        editor_card(ui, "No recent connections", colors, |ui| {
+            ui.label(
+                RichText::new("Connections you test from this screen will appear here.")
+                    .color(colors.dim),
+            );
+        });
+    } else {
+        egui::ScrollArea::vertical()
+            .max_height(260.0)
+            .show(ui, |ui| {
+                for connection in recent {
+                    let mut row_action = QuickAction::None;
+                    egui::Frame::new()
+                        .fill(colors.raised)
+                        .stroke(egui::Stroke::new(1.0, colors.border))
+                        .corner_radius(egui::CornerRadius::same(7))
+                        .inner_margin(10)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let user = if connection.username.is_empty() {
+                                    "Remote Desktop".to_owned()
+                                } else if connection.domain.is_empty() {
+                                    connection.username.clone()
+                                } else {
+                                    format!("{}\\{}", connection.domain, connection.username)
+                                };
+                                let response = ui
+                                    .vertical(|ui| {
+                                        ui.label(RichText::new(&connection.host).strong());
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{user} · port {}",
+                                                connection.port
+                                            ))
+                                            .small()
+                                            .color(colors.muted),
+                                        );
+                                    })
+                                    .response
+                                    .interact(egui::Sense::click());
+                                if response.clicked() {
+                                    row_action = QuickAction::Load(connection.clone());
+                                }
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.button(format!("{}  Connect", icons::PLAY)).clicked() {
+                                        row_action = QuickAction::Connect(connection.clone());
+                                    }
+                                    if ui.button("Save").clicked() {
+                                        row_action = QuickAction::Save(connection.clone());
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(6.0);
+                    if !matches!(row_action, QuickAction::None) {
+                        action = row_action;
+                    }
+                }
+            });
+    }
+    action
+}
+
 fn profile_editor(ui: &mut egui::Ui, profile: &mut Profile, colors: Colors) -> EditorAction {
     let mut action = EditorAction::None;
     ui.horizontal(|ui| {
-        ui.heading(if profile.connection.host.is_empty() {
-            "New connection"
-        } else {
-            "Edit connection"
+        ui.vertical(|ui| {
+            ui.heading(if profile.connection.host.is_empty() {
+                "New connection"
+            } else {
+                "Edit connection"
+            });
+            ui.label(
+                RichText::new("Connection details and the options used when FreeRDP starts.")
+                    .color(colors.dim),
+            );
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button(format!("{}  Cancel", icons::CLOSE)).clicked() {
                 action = EditorAction::Cancel;
             }
-        });
-    });
-    ui.add_space(8.0);
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        editor_section(ui, "Identity", colors, |ui| {
-            field_row(ui, "Name", |ui| {
-                ui.text_edit_singleline(&mut profile.name);
-            });
-            field_row(ui, "Host", |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut profile.connection.host)
-                        .hint_text("workpc.example.com"),
-                );
-            });
-            field_row(ui, "Port", |ui| {
-                ui.add(egui::DragValue::new(&mut profile.connection.port).range(1..=65535));
-            });
-            field_row(ui, "Username", |ui| {
-                ui.text_edit_singleline(&mut profile.connection.username);
-            });
-            field_row(ui, "Domain", |ui| {
-                ui.text_edit_singleline(&mut profile.connection.domain);
-            });
-            ui.checkbox(
-                &mut profile.connection.save_password,
-                "Save password securely when I connect",
-            );
-        });
-        ui.add_space(12.0);
-        editor_section(ui, "Display", colors, |ui| {
-            ui.checkbox(
-                &mut profile.display.dynamic_resolution,
-                "Dynamic resolution (recommended for a sharp desktop)",
-            );
-            egui::ComboBox::from_label("Window mode")
-                .selected_text(display_mode_name(profile.display.mode))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut profile.display.mode,
-                        DisplayMode::Windowed,
-                        "Windowed",
-                    );
-                    ui.selectable_value(
-                        &mut profile.display.mode,
-                        DisplayMode::BorderlessMaximized,
-                        "Borderless maximized",
-                    );
-                    ui.selectable_value(
-                        &mut profile.display.mode,
-                        DisplayMode::Fullscreen,
-                        "FreeRDP fullscreen",
-                    );
-                });
-            let mut explicit = profile.display.resolution.is_some();
-            if ui.checkbox(&mut explicit, "Use an explicit size").changed() {
-                profile.display.resolution = explicit.then_some(Resolution {
-                    width: 1920,
-                    height: 1080,
-                });
-            }
-            if let Some(resolution) = profile.display.resolution.as_mut() {
-                ui.horizontal(|ui| {
-                    ui.add(egui::DragValue::new(&mut resolution.width).range(320..=16384));
-                    ui.label("×");
-                    ui.add(egui::DragValue::new(&mut resolution.height).range(240..=16384));
-                });
-            }
-        });
-        ui.add_space(12.0);
-        editor_section(ui, "Resources", colors, |ui| {
-            ui.checkbox(&mut profile.resources.clipboard, "Clipboard");
-            ui.checkbox(&mut profile.resources.printers, "Printers");
-            ui.checkbox(&mut profile.resources.audio, "Audio output");
-            ui.checkbox(&mut profile.resources.microphone, "Microphone");
-            ui.separator();
-            ui.label(RichText::new("Local folders").strong());
-            let mut remove = None;
-            for (index, drive) in profile.resources.drives.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut drive.name)
-                            .hint_text("Share name")
-                            .desired_width(130.0),
-                    );
-                    let mut path = drive.path.to_string_lossy().into_owned();
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut path)
-                                .hint_text("/home/me/Documents")
-                                .desired_width(260.0),
-                        )
-                        .changed()
-                    {
-                        drive.path = PathBuf::from(path);
-                    }
-                    if ui.button(icons::DELETE).clicked() {
-                        remove = Some(index);
-                    }
-                });
-            }
-            if let Some(index) = remove {
-                profile.resources.drives.remove(index);
-            }
             if ui
-                .button(format!("{}  Add local folder", icons::FOLDER))
+                .add(
+                    egui::Button::new(
+                        RichText::new(format!("{}  Save and connect", icons::PLAY))
+                            .color(Color32::WHITE),
+                    )
+                    .fill(colors.accent),
+                )
                 .clicked()
             {
-                profile.resources.drives.push(Drive {
-                    name: "share".to_owned(),
-                    path: PathBuf::new(),
-                });
+                action = EditorAction::Connect;
+            }
+            if ui
+                .add(egui::Button::new(format!("{}  Save", icons::CHECK)))
+                .clicked()
+            {
+                action = EditorAction::Save;
             }
         });
     });
-    ui.add_space(12.0);
-    ui.horizontal(|ui| {
-        if ui
-            .add(egui::Button::new(format!("{}  Save", icons::CHECK)))
-            .clicked()
-        {
-            action = EditorAction::Save;
-        }
-        if ui
-            .add(egui::Button::new(format!(
-                "{}  Save and connect",
-                icons::PLAY
-            )))
-            .clicked()
-        {
-            action = EditorAction::Connect;
-        }
-    });
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(10.0);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.columns(2, |columns| {
+                editor_card(&mut columns[0], "Connection", colors, |ui| {
+                    field_row(ui, "Name", |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut profile.name)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                    field_row(ui, "Host", |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut profile.connection.host)
+                                .hint_text("workpc.example.com")
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                    field_row(ui, "Port", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut profile.connection.port).range(1..=65535),
+                        );
+                    });
+                    field_row(ui, "Username", |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut profile.connection.username)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                    field_row(ui, "Domain", |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut profile.connection.domain)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                    ui.checkbox(
+                        &mut profile.connection.save_password,
+                        "Save password securely when I connect",
+                    );
+                });
+                editor_card(&mut columns[1], "Display", colors, |ui| {
+                    ui.label(RichText::new("Window mode").small().color(colors.muted));
+                    egui::ComboBox::from_id_salt("profile-display-mode")
+                        .selected_text(display_mode_name(profile.display.mode))
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut profile.display.mode,
+                                DisplayMode::Windowed,
+                                "Windowed",
+                            );
+                            ui.selectable_value(
+                                &mut profile.display.mode,
+                                DisplayMode::BorderlessMaximized,
+                                "Borderless maximized",
+                            );
+                            ui.selectable_value(
+                                &mut profile.display.mode,
+                                DisplayMode::Fullscreen,
+                                "FreeRDP fullscreen",
+                            );
+                        });
+                    ui.add_space(8.0);
+                    ui.checkbox(
+                        &mut profile.display.dynamic_resolution,
+                        "Dynamic resolution (recommended)",
+                    );
+                    let mut explicit = profile.display.resolution.is_some();
+                    if ui.checkbox(&mut explicit, "Use an explicit size").changed() {
+                        profile.display.resolution = explicit.then_some(Resolution {
+                            width: 1920,
+                            height: 1080,
+                        });
+                    }
+                    if let Some(resolution) = profile.display.resolution.as_mut() {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut resolution.width).range(320..=16384),
+                            );
+                            ui.label("×");
+                            ui.add(
+                                egui::DragValue::new(&mut resolution.height).range(240..=16384),
+                            );
+                        });
+                    }
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(
+                            "Dynamic resolution keeps the remote desktop sharp when the window changes size.",
+                        )
+                        .small()
+                        .color(colors.muted),
+                    );
+                });
+            });
+            ui.add_space(10.0);
+            editor_card(ui, "Resources", colors, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut profile.resources.clipboard, "Clipboard");
+                    ui.checkbox(&mut profile.resources.printers, "Printers");
+                    ui.checkbox(&mut profile.resources.audio, "Audio output");
+                    ui.checkbox(&mut profile.resources.microphone, "Microphone");
+                });
+                egui::CollapsingHeader::new(format!(
+                    "Local folders ({})",
+                    profile.resources.drives.len()
+                ))
+                .default_open(!profile.resources.drives.is_empty())
+                .show(ui, |ui| {
+                    let mut remove = None;
+                    for (index, drive) in profile.resources.drives.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut drive.name)
+                                    .hint_text("Share name")
+                                    .desired_width(130.0),
+                            );
+                            let mut path = drive.path.to_string_lossy().into_owned();
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut path)
+                                        .hint_text("/home/me/Documents")
+                                        .desired_width(300.0),
+                                )
+                                .changed()
+                            {
+                                drive.path = PathBuf::from(path);
+                            }
+                            if ui.button(icons::DELETE).clicked() {
+                                remove = Some(index);
+                            }
+                        });
+                    }
+                    if let Some(index) = remove {
+                        profile.resources.drives.remove(index);
+                    }
+                    if ui
+                        .button(format!("{}  Add local folder", icons::FOLDER))
+                        .clicked()
+                    {
+                        profile.resources.drives.push(Drive {
+                            name: "share".to_owned(),
+                            path: PathBuf::new(),
+                        });
+                    }
+                });
+            });
+        });
     action
 }
 
@@ -1226,15 +1491,23 @@ fn empty_state(ui: &mut egui::Ui, colors: Colors) {
     });
 }
 
-fn editor_section(
+fn editor_card(
     ui: &mut egui::Ui,
     title: &str,
     colors: Colors,
     content: impl FnOnce(&mut egui::Ui),
 ) {
-    section_heading(ui, title, colors);
-    content(ui);
-    ui.separator();
+    egui::Frame::new()
+        .fill(colors.raised)
+        .stroke(egui::Stroke::new(1.0, colors.border))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            section_heading(ui, title, colors);
+            ui.add_space(5.0);
+            content(ui);
+        });
 }
 
 fn section_heading(ui: &mut egui::Ui, title: &str, colors: Colors) {

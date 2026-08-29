@@ -130,4 +130,13 @@ mod tests {
             Err(StorageError::NewerSchema { found: 999, .. })
         ));
     }
+
+    #[test]
+    fn existing_schema_without_recent_connections_remains_compatible() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "schema_version = 1\nprofiles = []\n").unwrap();
+        let data = load(&path).unwrap();
+        assert!(data.recent_connections.is_empty());
+    }
 }

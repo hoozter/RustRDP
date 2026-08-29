@@ -8,6 +8,8 @@ scaling on Wayland.
 ## Features
 
 - Create, edit, duplicate, favorite, search, and delete connection profiles.
+- Quick Connect for testing a host without creating a profile, with a bounded
+  password-free recent list and a one-click path to save useful entries later.
 - Native Wayland UI with system, light, and dark themes.
 - Automatic detection of `sdl-freerdp`, `wlfreerdp`, and X11 FreeRDP clients.
 - Dynamic resolution plus windowed, borderless-maximized, and fullscreen modes.
