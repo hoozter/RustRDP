@@ -12,7 +12,9 @@ scaling on Wayland.
   password-free recent list and a one-click path to save useful entries later.
 - Native Wayland UI with system, light, and dark themes.
 - Direct integration with FreeRDP's current SDL3 client, `sdl-freerdp`.
-- Dynamic resolution plus windowed, borderless-maximized, and fullscreen modes.
+- Dynamic resolution plus windowed, borderless-desktop, and safe fullscreen
+  modes. A Wayland layer-shell safety bar remains above the remote desktop
+  while FreeRDP keeps keyboard input captured for the remote system.
 - Clipboard, printer, audio, microphone, and local-folder redirection controls.
 - Password handoff through FreeRDP's forced stdin mode; passwords never enter
   process arguments or the profile file.
@@ -22,7 +24,7 @@ scaling on Wayland.
 
 ## Requirements
 
-- Linux with a modern Wayland or X11 desktop.
+- KDE Plasma 6 on Wayland, including Qt 6 QML and Layer Shell Qt.
 - The FreeRDP SDL3 client (`freerdp-sdl` on Debian/Ubuntu-family systems).
 - A Secret Service provider if saved passwords are desired.
 - Rust 1.85 or newer to build from source.

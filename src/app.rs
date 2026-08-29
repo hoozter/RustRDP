@@ -321,7 +321,7 @@ impl RustRdpApp {
         );
         match self
             .sessions
-            .launch(&profile, command, password, used_saved_credential)
+            .launch(&profile, command, password, used_saved_credential, true)
         {
             Ok(_) => {
                 self.success(format!("Connecting to {}…", profile.name));
@@ -589,20 +589,6 @@ impl RustRdpApp {
                     )
                     .changed();
                 ui.add_space(14.0);
-                section_heading(ui, "Sessions", self.colors);
-                changed |= ui
-                    .checkbox(
-                        &mut self.data.settings.show_session_controller,
-                        "Show a floating controller for active sessions",
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(
-                        &mut self.data.settings.auto_hide_session_controller,
-                        "Keep the controller compact",
-                    )
-                    .changed();
-                ui.add_space(14.0);
                 section_heading(ui, "Security", self.colors);
                 match CredentialStore::availability() {
                     Ok(()) => ui.label(format!(
@@ -849,59 +835,6 @@ impl RustRdpApp {
             self.status = None;
         }
     }
-
-    fn show_session_controllers(&mut self, ctx: &egui::Context) {
-        if !self.data.settings.show_session_controller {
-            return;
-        }
-        let sessions: Vec<_> = self
-            .sessions
-            .sessions()
-            .filter(|session| matches!(session.state, SessionState::Active))
-            .map(|session| (session.id, session.profile_name.clone(), session.pid))
-            .collect();
-        let mut disconnect = Vec::new();
-        for (id, name, pid) in sessions {
-            let colors = self.colors;
-            ctx.show_viewport_immediate(
-                egui::ViewportId::from_hash_of(("session-controller", id)),
-                egui::ViewportBuilder::default()
-                    .with_title(format!("{name} — RustRDP"))
-                    .with_inner_size([380.0, 58.0])
-                    .with_min_inner_size([280.0, 52.0])
-                    .with_decorations(false)
-                    .with_resizable(false)
-                    .with_always_on_top(),
-                |ui, _| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(icons::DESKTOP)
-                                .size(20.0)
-                                .color(colors.accent),
-                        );
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(&name).strong());
-                            ui.label(
-                                RichText::new(format!("Active · PID {pid}"))
-                                    .small()
-                                    .color(colors.muted),
-                            );
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button(format!("{}  Disconnect", icons::STOP)).clicked() {
-                                disconnect.push(id);
-                            }
-                        });
-                    });
-                },
-            );
-        }
-        for id in disconnect {
-            if let Err(error) = self.sessions.disconnect(id) {
-                self.error(error.to_string());
-            }
-        }
-    }
 }
 
 impl eframe::App for RustRdpApp {
@@ -957,7 +890,6 @@ impl eframe::App for RustRdpApp {
         self.show_settings_window(&ctx);
         self.show_password_prompt(&ctx);
         self.show_delete_prompt(&ctx);
-        self.show_session_controllers(&ctx);
         ctx.request_repaint_after(Duration::from_millis(250));
     }
 }
@@ -1027,8 +959,8 @@ fn profile_summary(ui: &mut egui::Ui, profile: &Profile, colors: Colors) -> Summ
         "Display",
         match profile.display.mode {
             DisplayMode::Windowed => "Windowed",
-            DisplayMode::BorderlessMaximized => "Borderless maximized",
-            DisplayMode::Fullscreen => "FreeRDP fullscreen",
+            DisplayMode::BorderlessMaximized => "Desktop — borderless",
+            DisplayMode::Fullscreen => "Fullscreen with safety bar",
         },
         colors,
     );
@@ -1329,14 +1261,22 @@ fn profile_editor(ui: &mut egui::Ui, profile: &mut Profile, colors: Colors) -> E
                             ui.selectable_value(
                                 &mut profile.display.mode,
                                 DisplayMode::BorderlessMaximized,
-                                "Borderless maximized",
+                                "Desktop — borderless",
                             );
                             ui.selectable_value(
                                 &mut profile.display.mode,
                                 DisplayMode::Fullscreen,
-                                "FreeRDP fullscreen",
+                                "Fullscreen with safety bar",
                             );
                         });
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(
+                            "A RustRDP safety bar stays above the session while all keyboard input goes to the remote computer.",
+                        )
+                        .small()
+                        .color(colors.muted),
+                    );
                     ui.add_space(8.0);
                     ui.checkbox(
                         &mut profile.display.dynamic_resolution,
@@ -1590,8 +1530,8 @@ fn status_chip(ui: &mut egui::Ui, text: &str, color: Color32) {
 fn display_mode_name(mode: DisplayMode) -> &'static str {
     match mode {
         DisplayMode::Windowed => "Windowed",
-        DisplayMode::BorderlessMaximized => "Borderless maximized",
-        DisplayMode::Fullscreen => "FreeRDP fullscreen",
+        DisplayMode::BorderlessMaximized => "Desktop — borderless",
+        DisplayMode::Fullscreen => "Fullscreen with safety bar",
     }
 }
 

@@ -140,7 +140,7 @@ Each connection should support at least:
 - Dynamic resolution
 - Windowed mode
 - Borderless/maximized mode
-- FreeRDP native fullscreen mode
+- fullscreen with remote keyboard capture and a layer-shell safety bar
 - Optional explicit resolution
 - Appropriate FreeRDP scaling options where useful
 
@@ -379,9 +379,11 @@ sessions:
 
 Unexpected FreeRDP termination should update the UI rather than leaving a fake connected state.
 
-## Floating session controller
+## Session controller
 
-Each active session should optionally have a small floating controller.
+Each active SDL3 session uses a RustRDP controller on Wayland's overlay layer.
+FreeRDP exposes a `/floatbar` option but does not implement it in the SDL3
+frontend, so RustRDP must not claim that option provides a controller.
 
 The intended experience is similar to Remmina's fullscreen toolbar.
 
@@ -407,7 +409,7 @@ The controller should be:
 
 - borderless
 - small
-- always-on-top where supported
+- rendered on the compositor's overlay layer so it cannot fall behind
 - unobtrusive
 - optionally auto-hiding
 - associated with one specific RDP session
@@ -423,28 +425,29 @@ Possible controls include:
 - resource/redirection information
 - fullscreen/window-mode controls where technically possible
 
-Do not assume Wayland permits arbitrary manipulation of another application's toplevel window.
-
-Design around Wayland restrictions instead of relying on X11-style foreign-window control.
+Use the documented KWin scripting API only for an explicit controller action
+such as minimizing the associated session window. Normal input remains grabbed
+by FreeRDP so remote Alt+Tab and Windows-key behavior works correctly.
 
 ## Fullscreen strategy
 
-True FreeRDP fullscreen does not have to be the primary experience.
+Fullscreen intentionally keeps keyboard input grabbed so Alt+Tab, the Windows
+key, and similar shortcuts reach the remote computer. The layer-shell
+controller is the guaranteed local escape route.
 
 A potentially better default is:
 
 - FreeRDP running borderless/maximized
 - dynamic resolution enabled
-- floating session controller above it
+- RustRDP's layer-shell session controller
 
-This should provide a fullscreen-like RDP experience while preserving normal KDE window management.
+This should provide a fullscreen-like RDP experience without sacrificing
+remote keyboard behavior.
 
-The user should still be able to:
+From the controller, the user should still be able to:
 
-- Alt+Tab
-- use Plasma Overview
-- switch virtual desktops
-- access normal desktop/window management
+- minimize the session and return to Plasma
+- disconnect the session
 
 Avoid hacks that depend on X11.
 
@@ -522,15 +525,6 @@ General
 ☑ Start with system
 ☑ Start minimized to tray
 ☑ Close window to tray
-
-
-Sessions
-
-Default display mode:
-[ Borderless maximized ▼ ]
-
-☑ Show floating session controller
-☑ Auto-hide session controller
 
 
 Security
@@ -707,8 +701,7 @@ Do not ship plaintext password storage as a temporary shortcut.
 Add:
 
 - active session tracking
-- floating egui session controller
-- auto-hide behavior
+- layer-shell session controller
 - disconnect/reconnect
 - session information
 - investigate safe Wayland-compatible session/window controls
@@ -758,7 +751,7 @@ FreeRDP session opens
       ↓
 Windows desktop is crisp despite Plasma fractional scaling
       ↓
-floating controller provides basic session controls
+layer-shell controller provides basic session controls
       ↓
 disconnect
       ↓

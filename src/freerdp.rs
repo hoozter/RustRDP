@@ -137,7 +137,10 @@ impl FreeRdpBackend {
         }
         match profile.display.mode {
             DisplayMode::Windowed => {}
-            DisplayMode::BorderlessMaximized => arguments.push(OsString::from("-decorations")),
+            DisplayMode::BorderlessMaximized => {
+                arguments.push(OsString::from("-decorations"));
+                arguments.push(OsString::from("+workarea"));
+            }
             DisplayMode::Fullscreen => arguments.push(OsString::from("+f")),
         }
         if let Some(resolution) = profile.display.resolution {
@@ -274,10 +277,28 @@ mod tests {
         assert!(args.contains(&"/cert:tofu".to_owned()));
         assert!(args.contains(&"+dynamic-resolution".to_owned()));
         assert!(args.contains(&"+f".to_owned()));
+        assert!(!args.contains(&"-grab-keyboard".to_owned()));
+        assert!(!args.iter().any(|arg| arg.starts_with("/floatbar")));
         assert!(args.contains(&"/size:1920x1080".to_owned()));
         assert!(args.contains(&"/microphone".to_owned()));
         assert!(args.contains(&"/drive:My_files,/home/david/Documents".to_owned()));
         assert!(!command.display_redacted().contains("password"));
+    }
+
+    #[test]
+    fn borderless_mode_fills_the_workarea_without_exclusive_fullscreen() {
+        let mut profile = Profile::default();
+        profile.display.mode = DisplayMode::BorderlessMaximized;
+        let command = capable_backend().build_connection(&profile, false).unwrap();
+        let args: Vec<_> = command
+            .arguments
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.contains(&"-decorations".to_owned()));
+        assert!(args.contains(&"+workarea".to_owned()));
+        assert!(!args.contains(&"+f".to_owned()));
     }
 
     #[test]

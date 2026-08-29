@@ -39,8 +39,6 @@ pub struct Settings {
     pub start_with_system: bool,
     pub start_minimized: bool,
     pub close_to_tray: bool,
-    pub show_session_controller: bool,
-    pub auto_hide_session_controller: bool,
     pub theme: ThemeMode,
 }
 
@@ -50,8 +48,6 @@ impl Default for Settings {
             start_with_system: false,
             start_minimized: false,
             close_to_tray: true,
-            show_session_controller: true,
-            auto_hide_session_controller: true,
             theme: ThemeMode::System,
         }
     }

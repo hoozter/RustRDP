@@ -2,8 +2,11 @@ use crate::freerdp::ConnectionCommand;
 use crate::model::Profile;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::{self, Read, Write};
-use std::process::{ChildStderr, Command, Stdio};
+use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::process::{Child, ChildStderr, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -58,6 +61,8 @@ pub enum SessionError {
     Spawn(io::Error),
     #[error("could not pass the password securely to FreeRDP: {0}")]
     CredentialHandoff(io::Error),
+    #[error("could not start the fullscreen safety bar: {0}")]
+    Controller(io::Error),
     #[error("session not found")]
     NotFound,
 }
@@ -111,7 +116,13 @@ impl SessionManager {
         connection: ConnectionCommand,
         mut password: Option<String>,
         used_saved_credential: bool,
+        show_controller: bool,
     ) -> Result<Uuid, SessionError> {
+        let controller = if show_controller {
+            Some(ControllerServer::start(&profile.name).map_err(SessionError::Controller)?)
+        } else {
+            None
+        };
         let mut command = Command::new(&connection.program);
         command
             .args(&connection.arguments)
@@ -160,7 +171,7 @@ impl SessionManager {
         let stderr = child.stderr.take();
         thread::Builder::new()
             .name(format!("rustrdp-session-{id}"))
-            .spawn(move || watch_process(id, child, stderr, control_rx, events))
+            .spawn(move || watch_process(id, child, stderr, control_rx, events, controller))
             .map_err(SessionError::Spawn)?;
         self.controls.insert(id, control_tx);
         self.sessions.insert(
@@ -251,6 +262,7 @@ fn watch_process(
     stderr: Option<ChildStderr>,
     controls: Receiver<Control>,
     events: Sender<Event>,
+    mut controller: Option<ControllerServer>,
 ) {
     let output_reader = stderr.map(|stderr| thread::spawn(move || read_bounded(stderr)));
     let started = Instant::now();
@@ -260,6 +272,16 @@ fn watch_process(
         if controls.try_recv().is_ok() {
             requested_disconnect = true;
             let _ = child.kill();
+        }
+        if let Some(controller) = controller.as_mut() {
+            match controller.poll() {
+                ControllerAction::None | ControllerAction::Ready => {}
+                ControllerAction::Minimize => minimize_window(child.id()),
+                ControllerAction::Disconnect => {
+                    requested_disconnect = true;
+                    let _ = child.kill();
+                }
+            }
         }
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -279,6 +301,172 @@ fn watch_process(
     let code = status.and_then(|status| status.code());
     let exit = classify_exit(code, &technical, requested_disconnect);
     let _ = events.send(Event::Exited(id, exit));
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ControllerAction {
+    None,
+    Ready,
+    Minimize,
+    Disconnect,
+}
+
+struct ControllerServer {
+    listener: TcpListener,
+    process: Child,
+    route_prefix: String,
+}
+
+impl ControllerServer {
+    fn start(profile_name: &str) -> io::Result<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        listener.set_nonblocking(true)?;
+        let token = Uuid::new_v4().simple().to_string();
+        let route_prefix = format!("/{token}");
+        let control_url = format!("http://{}{}", listener.local_addr()?, route_prefix);
+        let qml_path = controller_qml_path().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "session-controller.qml was not found",
+            )
+        })?;
+        let process = Command::new("qml6")
+            .arg(qml_path)
+            .arg("--")
+            .arg(control_url)
+            .arg(profile_name)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let mut controller = Self {
+            listener,
+            process,
+            route_prefix,
+        };
+        controller.wait_until_ready()?;
+        Ok(controller)
+    }
+
+    fn poll(&mut self) -> ControllerAction {
+        if !matches!(self.process.try_wait(), Ok(None)) {
+            return ControllerAction::Disconnect;
+        }
+        let Ok((mut stream, _)) = self.listener.accept() else {
+            return ControllerAction::None;
+        };
+        let action = read_controller_action(&mut stream, &self.route_prefix);
+        let _ = stream.write_all(
+            b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        );
+        action
+    }
+
+    fn wait_until_ready(&mut self) -> io::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if let Some(status) = self.process.try_wait()? {
+                return Err(io::Error::other(format!(
+                    "session controller exited during startup ({status})"
+                )));
+            }
+            let Ok((mut stream, _)) = self.listener.accept() else {
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            let action = read_controller_action(&mut stream, &self.route_prefix);
+            let _ = stream.write_all(
+                b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+            );
+            if action == ControllerAction::Ready {
+                return Ok(());
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "session controller did not become ready",
+        ))
+    }
+}
+
+impl Drop for ControllerServer {
+    fn drop(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
+}
+
+fn read_controller_action(stream: &mut TcpStream, route_prefix: &str) -> ControllerAction {
+    let mut request = [0_u8; 2048];
+    let Ok(count) = stream.read(&mut request) else {
+        return ControllerAction::None;
+    };
+    controller_action_from_request(&String::from_utf8_lossy(&request[..count]), route_prefix)
+}
+
+fn controller_action_from_request(request: &str, route_prefix: &str) -> ControllerAction {
+    let Some(path) = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+    else {
+        return ControllerAction::None;
+    };
+    if path == format!("{route_prefix}/ready") {
+        ControllerAction::Ready
+    } else if path == format!("{route_prefix}/minimize") {
+        ControllerAction::Minimize
+    } else if path == format!("{route_prefix}/disconnect") {
+        ControllerAction::Disconnect
+    } else {
+        ControllerAction::None
+    }
+}
+
+fn controller_qml_path() -> Option<PathBuf> {
+    let installed = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .parent()?
+        .join("share/rustrdp/session-controller.qml");
+    if installed.is_file() {
+        Some(installed)
+    } else {
+        let development =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/session-controller.qml");
+        development.is_file().then_some(development)
+    }
+}
+
+fn minimize_window(pid: u32) {
+    let plugin = format!("rustrdp-minimize-{}", Uuid::new_v4().simple());
+    let script_path = std::env::temp_dir().join(format!("{plugin}.js"));
+    let script = format!(
+        "for (const window of workspace.windowList()) {{\n\
+         if (window.pid === {pid}) {{ window.minimized = true; break; }}\n\
+         }}\n\
+         callDBus('org.kde.KWin', '/Scripting', 'org.kde.kwin.Scripting', \
+         'unloadScript', '{plugin}');\n"
+    );
+    if fs::write(&script_path, script).is_err() {
+        return;
+    }
+    let loaded = Command::new("qdbus6")
+        .args([
+            "org.kde.KWin",
+            "/Scripting",
+            "org.kde.kwin.Scripting.loadScript",
+        ])
+        .arg(&script_path)
+        .arg(&plugin)
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if loaded {
+        let _ = Command::new("qdbus6")
+            .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"])
+            .status();
+    }
+    let _ = fs::remove_file(script_path);
 }
 
 fn read_bounded(mut stderr: impl Read) -> String {
@@ -425,6 +613,36 @@ mod tests {
     }
 
     #[test]
+    fn controller_accepts_only_its_private_routes() {
+        let prefix = "/private-token";
+        assert_eq!(
+            controller_action_from_request("POST /private-token/ready HTTP/1.1\r\n", prefix),
+            ControllerAction::Ready
+        );
+        assert_eq!(
+            controller_action_from_request("POST /private-token/minimize HTTP/1.1\r\n", prefix),
+            ControllerAction::Minimize
+        );
+        assert_eq!(
+            controller_action_from_request("POST /private-token/disconnect HTTP/1.1\r\n", prefix),
+            ControllerAction::Disconnect
+        );
+        assert_eq!(
+            controller_action_from_request("POST /wrong/disconnect HTTP/1.1\r\n", prefix),
+            ControllerAction::None
+        );
+    }
+
+    #[test]
+    fn controller_uses_the_wayland_overlay_layer() {
+        let qml = include_str!("../assets/session-controller.qml");
+        assert!(qml.contains("LayerShell.Window.LayerOverlay"));
+        assert!(qml.contains("KeyboardInteractivityNone"));
+        assert!(qml.contains("sendCommand(\"minimize\")"));
+        assert!(qml.contains("sendCommand(\"disconnect\")"));
+    }
+
+    #[test]
     fn drains_large_diagnostics_while_bounding_retained_output() {
         let input = vec![b'x'; MAX_TECHNICAL_OUTPUT + 16_384];
         let output = read_bounded(std::io::Cursor::new(input));
@@ -441,7 +659,9 @@ mod tests {
             password_via_stdin: false,
         };
         let mut manager = SessionManager::default();
-        let id = manager.launch(&profile, command, None, false).unwrap();
+        let id = manager
+            .launch(&profile, command, None, false, false)
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             manager.poll();
