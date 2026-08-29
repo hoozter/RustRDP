@@ -1,21 +1,12 @@
 use crate::model::{DisplayMode, Drive, Profile};
-use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BackendKind {
-    Sdl,
-    Wayland,
-    X11,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FreeRdpBackend {
     pub executable: PathBuf,
-    pub kind: BackendKind,
     pub version: String,
     pub capabilities: Capabilities,
 }
@@ -53,7 +44,7 @@ impl ConnectionCommand {
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
-    #[error("FreeRDP was not found. Install FreeRDP 3 to open remote desktop sessions.")]
+    #[error("The FreeRDP SDL3 client was not found. Install the freerdp-sdl package.")]
     NotFound,
     #[error("this FreeRDP client cannot receive credentials safely through standard input")]
     UnsafeCredentialHandoff,
@@ -63,33 +54,12 @@ pub enum BackendError {
 
 impl FreeRdpBackend {
     pub fn detect() -> Result<Self, BackendError> {
-        let wayland = env::var_os("WAYLAND_DISPLAY").is_some();
-        let candidates: &[(&str, BackendKind)] = if wayland {
-            &[
-                ("sdl-freerdp3", BackendKind::Sdl),
-                ("sdl-freerdp", BackendKind::Sdl),
-                ("wlfreerdp", BackendKind::Wayland),
-                ("xfreerdp3", BackendKind::X11),
-                ("xfreerdp", BackendKind::X11),
-            ]
-        } else {
-            &[
-                ("sdl-freerdp3", BackendKind::Sdl),
-                ("sdl-freerdp", BackendKind::Sdl),
-                ("xfreerdp3", BackendKind::X11),
-                ("xfreerdp", BackendKind::X11),
-                ("wlfreerdp", BackendKind::Wayland),
-            ]
-        };
-        for (name, kind) in candidates {
-            if let Some(executable) = find_executable(name) {
-                return Ok(Self::inspect(executable, *kind));
-            }
-        }
-        Err(BackendError::NotFound)
+        find_executable("sdl-freerdp")
+            .map(Self::inspect)
+            .ok_or(BackendError::NotFound)
     }
 
-    fn inspect(executable: PathBuf, kind: BackendKind) -> Self {
+    fn inspect(executable: PathBuf) -> Self {
         let version_output = Command::new(&executable).arg("/version").output();
         let version = version_output
             .ok()
@@ -116,7 +86,6 @@ impl FreeRdpBackend {
         let has = |needle: &str| help.contains(needle);
         Self {
             executable,
-            kind,
             version,
             capabilities: Capabilities {
                 dynamic_resolution: has("dynamic-resolution"),
@@ -253,23 +222,6 @@ fn shell_quote(value: &str) -> String {
     }
 }
 
-pub fn detect_candidates_in_path(path: &str) -> HashSet<String> {
-    env::split_paths(&OsString::from(path))
-        .flat_map(|directory| {
-            [
-                "sdl-freerdp3",
-                "sdl-freerdp",
-                "wlfreerdp",
-                "xfreerdp3",
-                "xfreerdp",
-            ]
-            .into_iter()
-            .filter(move |name| directory.join(name).is_file())
-            .map(str::to_owned)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,8 +229,7 @@ mod tests {
 
     fn capable_backend() -> FreeRdpBackend {
         FreeRdpBackend {
-            executable: PathBuf::from("/usr/bin/xfreerdp3"),
-            kind: BackendKind::X11,
+            executable: PathBuf::from("/usr/bin/sdl-freerdp"),
             version: "3.30.0".to_owned(),
             capabilities: Capabilities {
                 dynamic_resolution: true,

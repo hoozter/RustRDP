@@ -308,7 +308,7 @@ Treat this as security-sensitive.
 Do not blindly invoke:
 
 ```text
-wlfreerdp /p:plaintext-password
+sdl-freerdp /p:plaintext-password
 ```
 
 if doing so exposes the password through the process command line.
@@ -326,20 +326,8 @@ Debug logging must redact:
 
 ## FreeRDP backend
 
-At startup, detect available FreeRDP clients.
-
-Prefer the Wayland-native FreeRDP client when available and appropriate.
-
-Potential backends may include:
-
-```text
-wlfreerdp
-xfreerdp3
-xfreerdp
-sdl-freerdp
-```
-
-Do not assume the binary name.
+At startup, require the current FreeRDP SDL3 client, `sdl-freerdp`. Deprecated
+Wayland, X11, and legacy binary-name fallbacks are intentionally unsupported.
 
 Detect capabilities/version and construct commands accordingly.
 

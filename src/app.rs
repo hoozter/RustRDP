@@ -3,7 +3,7 @@ use crate::credentials::CredentialStore;
 use crate::freerdp::FreeRdpBackend;
 use crate::icons;
 use crate::model::{AppData, DisplayMode, Drive, Profile, QuickConnection, Resolution, ThemeMode};
-use crate::sessions::{SessionExitKind, SessionManager, SessionState};
+use crate::sessions::{SessionManager, SessionState};
 use crate::storage;
 use crate::theme::{self, Colors};
 use crate::tray::{TrayAction, TrayIntegration};
@@ -366,19 +366,11 @@ impl RustRdpApp {
                 Ok(backend) => {
                     status_chip(
                         ui,
-                        &format!(
-                            "{} · {}",
-                            match backend.kind {
-                                crate::freerdp::BackendKind::Sdl => "SDL",
-                                crate::freerdp::BackendKind::Wayland => "Wayland",
-                                crate::freerdp::BackendKind::X11 => "X11",
-                            },
-                            backend.version.replace("This is ", "")
-                        ),
+                        &format!("SDL3 · {}", backend.version.replace("This is ", "")),
                         self.colors.success,
                     );
                 }
-                Err(_) => status_chip(ui, "FreeRDP not found", self.colors.error),
+                Err(_) => status_chip(ui, "FreeRDP SDL3 not found", self.colors.error),
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
@@ -508,16 +500,12 @@ impl RustRdpApp {
             empty_state(root, self.colors);
         }
         root.add_space(16.0);
-        let retry_without_clipboard = session_list(root, &mut self.sessions, self.colors);
+        session_list(root, &mut self.sessions, self.colors);
         match quick_action {
             QuickAction::None => {}
             QuickAction::Connect(connection) => self.connect_quick(connection),
             QuickAction::Save(connection) => self.save_quick_as_profile(connection),
             QuickAction::Load(connection) => self.quick_draft = connection,
-        }
-        if let Some(profile) = retry_without_clipboard {
-            self.success("Retrying without clipboard integration");
-            self.request_connect_profile(profile, true);
         }
         match editor_action {
             EditorAction::None => {}
@@ -1438,11 +1426,7 @@ fn profile_editor(ui: &mut egui::Ui, profile: &mut Profile, colors: Colors) -> E
     action
 }
 
-fn session_list(
-    ui: &mut egui::Ui,
-    sessions: &mut SessionManager,
-    colors: Colors,
-) -> Option<Profile> {
+fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors) {
     let snapshot: Vec<_> = sessions
         .sessions()
         .map(|session| {
@@ -1455,13 +1439,12 @@ fn session_list(
         })
         .collect();
     if snapshot.is_empty() {
-        return None;
+        return;
     }
     ui.separator();
     section_heading(ui, "Sessions", colors);
     let mut disconnect = None;
     let mut dismiss = None;
-    let mut retry_without_clipboard = None;
     for (id, name, pid, state) in snapshot {
         ui.horizontal(|ui| {
             let (label, color) = match &state {
@@ -1482,11 +1465,6 @@ fn session_list(
                 SessionState::Exited(exit) => {
                     if ui.button("Dismiss").clicked() {
                         dismiss = Some(id);
-                    }
-                    if exit.kind == SessionExitKind::Clipboard
-                        && ui.button("Retry without clipboard").clicked()
-                    {
-                        retry_without_clipboard = Some(id);
                     }
                     ui.label(RichText::new(&exit.message).small().color(colors.dim));
                 }
@@ -1529,7 +1507,6 @@ fn session_list(
     if let Some(id) = dismiss {
         sessions.dismiss_exited(id);
     }
-    retry_without_clipboard.and_then(|id| sessions.retry_without_clipboard(id))
 }
 
 fn empty_state(ui: &mut egui::Ui, colors: Colors) {

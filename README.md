@@ -11,7 +11,7 @@ scaling on Wayland.
 - Quick Connect for testing a host without creating a profile, with a bounded
   password-free recent list and a one-click path to save useful entries later.
 - Native Wayland UI with system, light, and dark themes.
-- Automatic detection of `sdl-freerdp`, `wlfreerdp`, and X11 FreeRDP clients.
+- Direct integration with FreeRDP's current SDL3 client, `sdl-freerdp`.
 - Dynamic resolution plus windowed, borderless-maximized, and fullscreen modes.
 - Clipboard, printer, audio, microphone, and local-folder redirection controls.
 - Password handoff through FreeRDP's forced stdin mode; passwords never enter
@@ -23,18 +23,24 @@ scaling on Wayland.
 ## Requirements
 
 - Linux with a modern Wayland or X11 desktop.
-- A FreeRDP 3 client. `wlfreerdp` is preferred on Wayland.
+- The FreeRDP SDL3 client (`freerdp-sdl` on Debian/Ubuntu-family systems).
 - A Secret Service provider if saved passwords are desired.
 - Rust 1.85 or newer to build from source.
 
-On Debian/Ubuntu-family systems, FreeRDP is commonly provided by a package such
-as `freerdp3-wayland` or `freerdp3-x11`.
+Install the required client on Debian/Ubuntu-family systems with:
+
+```sh
+sudo apt install freerdp-sdl
+```
 
 ## Build and run
 
 ```sh
 cargo run --release
 ```
+
+After installation, launch RustRDP from the desktop application menu or run
+`rustrdp` in a terminal.
 
 For a user-local installation with no root access:
 

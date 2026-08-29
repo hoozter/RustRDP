@@ -48,7 +48,6 @@ pub enum SessionExitKind {
     Disconnected,
     Authentication,
     Certificate,
-    Clipboard,
     Connectivity,
     Unexpected,
 }
@@ -244,23 +243,6 @@ impl SessionManager {
             })
         })
     }
-
-    pub fn retry_without_clipboard(&mut self, session_id: Uuid) -> Option<Profile> {
-        let session = self.sessions.get(&session_id)?;
-        if !matches!(
-            session.state,
-            SessionState::Exited(SessionExit {
-                kind: SessionExitKind::Clipboard,
-                ..
-            })
-        ) {
-            return None;
-        }
-        let mut profile = session.profile.clone();
-        profile.resources.clipboard = false;
-        self.sessions.remove(&session_id);
-        Some(profile)
-    }
 }
 
 fn watch_process(
@@ -363,14 +345,6 @@ fn classify_exit(code: Option<i32>, technical: &str, requested_disconnect: bool)
             "Remote identity changed",
             "The remote computer's identity changed. Verify it before reconnecting.",
         )
-    } else if lower.contains("cliprdr_packet_format_list_new failed")
-        || lower.contains("cliprdr_client_format_list") && lower.contains("failed")
-    {
-        (
-            SessionExitKind::Clipboard,
-            "Clipboard integration failed",
-            "FreeRDP's Wayland clipboard integration stopped this connection.",
-        )
     } else if lower.contains("name or service not known") || lower.contains("getaddrinfo") {
         (
             SessionExitKind::Connectivity,
@@ -448,39 +422,6 @@ mod tests {
     fn status_logon_failure_is_an_authentication_failure() {
         let exit = classify_exit(Some(1), "SPNEGO received STATUS_LOGON_FAILURE", false);
         assert_eq!(exit.kind, SessionExitKind::Authentication);
-    }
-
-    #[test]
-    fn wayland_clipboard_crash_is_reported_with_a_retry_path() {
-        let technical = "cliprdr_packet_format_list_new failed!\n\
-                         wlfreerdp_run: error handling UWAC events\n\
-                         ERRCONNECT_CONNECT_CANCELLED";
-        let exit = classify_exit(Some(1), technical, false);
-        assert_eq!(exit.kind, SessionExitKind::Clipboard);
-        assert_eq!(exit.title, "Clipboard integration failed");
-
-        let mut profile = Profile::default();
-        profile.resources.clipboard = true;
-        let id = Uuid::new_v4();
-        let mut manager = SessionManager::default();
-        manager.sessions.insert(
-            id,
-            Session {
-                id,
-                profile_id: profile.id,
-                profile_name: profile.name.clone(),
-                pid: 123,
-                state: SessionState::Exited(exit),
-                profile: profile.clone(),
-                used_saved_credential: true,
-                credential_failure_handled: false,
-            },
-        );
-
-        let retry = manager.retry_without_clipboard(id).unwrap();
-        assert!(!retry.resources.clipboard);
-        assert!(profile.resources.clipboard);
-        assert!(!manager.sessions.contains_key(&id));
     }
 
     #[test]
