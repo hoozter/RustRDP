@@ -3,7 +3,7 @@ use crate::credentials::CredentialStore;
 use crate::freerdp::FreeRdpBackend;
 use crate::icons;
 use crate::model::{AppData, DisplayMode, Drive, Profile, QuickConnection, Resolution, ThemeMode};
-use crate::sessions::{SessionManager, SessionState};
+use crate::sessions::{SessionExitKind, SessionManager, SessionState};
 use crate::storage;
 use crate::theme::{self, Colors};
 use crate::tray::{TrayAction, TrayIntegration};
@@ -508,12 +508,16 @@ impl RustRdpApp {
             empty_state(root, self.colors);
         }
         root.add_space(16.0);
-        session_list(root, &mut self.sessions, self.colors);
+        let retry_without_clipboard = session_list(root, &mut self.sessions, self.colors);
         match quick_action {
             QuickAction::None => {}
             QuickAction::Connect(connection) => self.connect_quick(connection),
             QuickAction::Save(connection) => self.save_quick_as_profile(connection),
             QuickAction::Load(connection) => self.quick_draft = connection,
+        }
+        if let Some(profile) = retry_without_clipboard {
+            self.success("Retrying without clipboard integration");
+            self.request_connect_profile(profile, true);
         }
         match editor_action {
             EditorAction::None => {}
@@ -1434,7 +1438,11 @@ fn profile_editor(ui: &mut egui::Ui, profile: &mut Profile, colors: Colors) -> E
     action
 }
 
-fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors) {
+fn session_list(
+    ui: &mut egui::Ui,
+    sessions: &mut SessionManager,
+    colors: Colors,
+) -> Option<Profile> {
     let snapshot: Vec<_> = sessions
         .sessions()
         .map(|session| {
@@ -1447,12 +1455,13 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
         })
         .collect();
     if snapshot.is_empty() {
-        return;
+        return None;
     }
     ui.separator();
     section_heading(ui, "Sessions", colors);
     let mut disconnect = None;
     let mut dismiss = None;
+    let mut retry_without_clipboard = None;
     for (id, name, pid, state) in snapshot {
         ui.horizontal(|ui| {
             let (label, color) = match &state {
@@ -1474,6 +1483,11 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
                     if ui.button("Dismiss").clicked() {
                         dismiss = Some(id);
                     }
+                    if exit.kind == SessionExitKind::Clipboard
+                        && ui.button("Retry without clipboard").clicked()
+                    {
+                        retry_without_clipboard = Some(id);
+                    }
                     ui.label(RichText::new(&exit.message).small().color(colors.dim));
                 }
                 SessionState::Disconnecting => {}
@@ -1485,12 +1499,25 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
             egui::CollapsingHeader::new("Technical details")
                 .id_salt(("session-details", id))
                 .show(ui, |ui| {
-                    ui.label(
-                        RichText::new(&exit.technical_details)
-                            .monospace()
-                            .small()
-                            .color(colors.dim),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("FreeRDP output").small().color(colors.dim));
+                        if ui.button("Copy all").clicked() {
+                            ui.ctx().copy_text(exit.technical_details.clone());
+                        }
+                    });
+                    egui::ScrollArea::both()
+                        .id_salt(("session-details-scroll", id))
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            let mut details = exit.technical_details.clone();
+                            ui.add(
+                                egui::TextEdit::multiline(&mut details)
+                                    .font(egui::TextStyle::Monospace)
+                                    .code_editor()
+                                    .desired_rows(8)
+                                    .desired_width(ui.available_width()),
+                            );
+                        });
                 });
         }
         ui.separator();
@@ -1502,6 +1529,7 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
     if let Some(id) = dismiss {
         sessions.dismiss_exited(id);
     }
+    retry_without_clipboard.and_then(|id| sessions.retry_without_clipboard(id))
 }
 
 fn empty_state(ui: &mut egui::Ui, colors: Colors) {
