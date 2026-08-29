@@ -5,6 +5,8 @@ use eframe::egui::{self, Color32, CornerRadius, Stroke};
 pub struct Colors {
     pub bg: Color32,
     pub panel: Color32,
+    pub sidebar: Color32,
+    pub toolbar: Color32,
     pub raised: Color32,
     pub border: Color32,
     pub heading: Color32,
@@ -26,6 +28,8 @@ impl Colors {
                 // Ottrin's cool, layered dark palette.
                 bg: Color32::from_rgb(30, 34, 39),
                 panel: Color32::from_rgb(38, 43, 49),
+                sidebar: Color32::from_rgb(35, 40, 46),
+                toolbar: Color32::from_rgb(38, 43, 49),
                 raised: Color32::from_rgb(49, 56, 66),
                 border: Color32::from_rgb(59, 68, 80),
                 heading: Color32::from_rgb(231, 236, 240),
@@ -43,6 +47,8 @@ impl Colors {
             Self {
                 bg: Color32::from_rgb(255, 255, 255),
                 panel: Color32::from_rgb(244, 246, 249),
+                sidebar: Color32::from_rgb(239, 242, 246),
+                toolbar: Color32::from_rgb(244, 246, 249),
                 raised: Color32::from_rgb(235, 239, 244),
                 border: Color32::from_rgb(208, 216, 225),
                 heading: Color32::from_rgb(25, 31, 38),
@@ -93,12 +99,30 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) -> Colors {
     visuals.widgets.active.corner_radius = CornerRadius::same(6);
     visuals.window_corner_radius = CornerRadius::same(8);
     visuals.window_stroke = Stroke::new(1.0, colors.border);
+    visuals.menu_corner_radius = CornerRadius::same(6);
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.global_style()).clone();
-    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-    style.spacing.button_padding = egui::vec2(12.0, 7.0);
-    style.spacing.interact_size.y = 34.0;
+    style.spacing.item_spacing = egui::vec2(9.0, 9.0);
+    style.spacing.button_padding = egui::vec2(14.0, 8.0);
+    style.spacing.interact_size.y = 40.0;
+    style.spacing.text_edit_width = 280.0;
+    style.text_styles.insert(
+        egui::TextStyle::Body,
+        egui::FontId::new(15.5, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Button,
+        egui::FontId::new(15.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Heading,
+        egui::FontId::new(21.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Small,
+        egui::FontId::new(13.5, egui::FontFamily::Proportional),
+    );
     ctx.set_global_style(style);
     colors
 }

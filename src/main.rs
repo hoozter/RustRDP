@@ -13,8 +13,8 @@ fn main() {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("RustRDP")
             .with_app_id("com.hoozter.RustRDP")
-            .with_inner_size([1040.0, 700.0])
-            .with_min_inner_size([780.0, 540.0])
+            .with_inner_size([1180.0, 760.0])
+            .with_min_inner_size([920.0, 620.0])
             .with_visible(!minimized),
         ..Default::default()
     };

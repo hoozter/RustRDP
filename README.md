@@ -10,12 +10,15 @@ scaling on Wayland.
 - Create, edit, duplicate, favorite, search, and delete connection profiles.
 - Quick Connect for testing a host without creating a profile, with a bounded
   password-free recent list and a one-click path to save useful entries later.
-- Native Wayland UI with system, light, and dark themes.
+- Cohesive native Wayland workspace with saved-connection navigation, semantic
+  icons, accessible controls, and system, light, and dark themes.
 - Direct integration with FreeRDP's current SDL3 client, `sdl-freerdp`.
-- Dynamic resolution plus windowed, borderless-desktop, and safe fullscreen
-  modes. A Wayland layer-shell safety bar remains above the remote desktop
-  while FreeRDP keeps keyboard input captured for the remote system. FreeRDP's
-  `Right Shift + D` disconnect shortcut remains available as an emergency exit.
+- Dynamic resolution or fixed presets discovered from the active KDE display,
+  including its current native mode, plus windowed, borderless-desktop, and
+  safe fullscreen modes. A Wayland layer-shell safety bar remains above the
+  remote desktop while FreeRDP keeps keyboard input captured for the remote
+  system. FreeRDP's `Right Shift + D` disconnect shortcut remains available as
+  an emergency exit.
 - Clipboard, printer, audio, microphone, and local-folder redirection controls.
 - Password handoff through FreeRDP's forced stdin mode; passwords never enter
   process arguments or the profile file.

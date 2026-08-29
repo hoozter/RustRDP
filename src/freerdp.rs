@@ -143,7 +143,9 @@ impl FreeRdpBackend {
             }
             DisplayMode::Fullscreen => arguments.push(OsString::from("+f")),
         }
-        if let Some(resolution) = profile.display.resolution {
+        if !profile.display.dynamic_resolution
+            && let Some(resolution) = profile.display.resolution
+        {
             arguments.push(OsString::from(format!(
                 "/size:{}x{}",
                 resolution.width, resolution.height
@@ -257,6 +259,7 @@ mod tests {
         profile.connection.username = "david".to_owned();
         profile.connection.domain = "WORK".to_owned();
         profile.display.mode = DisplayMode::Fullscreen;
+        profile.display.dynamic_resolution = false;
         profile.display.resolution = Some(Resolution {
             width: 1920,
             height: 1080,
@@ -275,7 +278,7 @@ mod tests {
             .collect();
         assert!(args.contains(&"/from-stdin:force".to_owned()));
         assert!(args.contains(&"/cert:tofu".to_owned()));
-        assert!(args.contains(&"+dynamic-resolution".to_owned()));
+        assert!(!args.contains(&"+dynamic-resolution".to_owned()));
         assert!(args.contains(&"+f".to_owned()));
         assert!(!args.contains(&"-grab-keyboard".to_owned()));
         assert!(!args.iter().any(|arg| arg.starts_with("/floatbar")));
@@ -299,6 +302,25 @@ mod tests {
         assert!(args.contains(&"-decorations".to_owned()));
         assert!(args.contains(&"+workarea".to_owned()));
         assert!(!args.contains(&"+f".to_owned()));
+    }
+
+    #[test]
+    fn dynamic_resolution_does_not_also_force_a_stale_fixed_size() {
+        let mut profile = Profile::default();
+        profile.display.dynamic_resolution = true;
+        profile.display.resolution = Some(Resolution {
+            width: 1920,
+            height: 1080,
+        });
+        let command = capable_backend().build_connection(&profile, false).unwrap();
+        let args: Vec<_> = command
+            .arguments
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.contains(&"+dynamic-resolution".to_owned()));
+        assert!(!args.iter().any(|argument| argument.starts_with("/size:")));
     }
 
     #[test]

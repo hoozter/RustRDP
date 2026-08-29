@@ -1,6 +1,7 @@
 pub mod app;
 pub mod autostart;
 pub mod credentials;
+pub mod display;
 pub mod freerdp;
 pub mod icons;
 pub mod model;
