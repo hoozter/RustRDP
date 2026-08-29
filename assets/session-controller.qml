@@ -13,6 +13,7 @@ Window {
 
     width: 390
     height: 48
+    visible: true
     color: "transparent"
     flags: Qt.FramelessWindowHint
     title: profileName + " — RustRDP controls"
@@ -31,7 +32,15 @@ Window {
         request.send("")
     }
 
-    Component.onCompleted: sendCommand("ready")
+    // A loaded QML Window is hidden by default. Report readiness only after
+    // this surface has been made visible, otherwise RustRDP could launch a
+    // fullscreen session behind a controller that was alive but never mapped.
+    Timer {
+        interval: 150
+        running: root.visible
+        repeat: false
+        onTriggered: root.sendCommand("ready")
+    }
 
     Rectangle {
         anchors.fill: parent

@@ -1272,7 +1272,7 @@ fn profile_editor(ui: &mut egui::Ui, profile: &mut Profile, colors: Colors) -> E
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(
-                            "A RustRDP safety bar stays above the session while all keyboard input goes to the remote computer.",
+                            "The mouse-controlled safety bar stays above the session without stealing keyboard focus. Emergency disconnect: Right Shift + D.",
                         )
                         .small()
                         .color(colors.muted),

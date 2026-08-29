@@ -636,6 +636,7 @@ mod tests {
     #[test]
     fn controller_uses_the_wayland_overlay_layer() {
         let qml = include_str!("../assets/session-controller.qml");
+        assert!(qml.contains("visible: true"));
         assert!(qml.contains("LayerShell.Window.LayerOverlay"));
         assert!(qml.contains("KeyboardInteractivityNone"));
         assert!(qml.contains("sendCommand(\"minimize\")"));

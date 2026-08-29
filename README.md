@@ -14,7 +14,8 @@ scaling on Wayland.
 - Direct integration with FreeRDP's current SDL3 client, `sdl-freerdp`.
 - Dynamic resolution plus windowed, borderless-desktop, and safe fullscreen
   modes. A Wayland layer-shell safety bar remains above the remote desktop
-  while FreeRDP keeps keyboard input captured for the remote system.
+  while FreeRDP keeps keyboard input captured for the remote system. FreeRDP's
+  `Right Shift + D` disconnect shortcut remains available as an emergency exit.
 - Clipboard, printer, audio, microphone, and local-folder redirection controls.
 - Password handoff through FreeRDP's forced stdin mode; passwords never enter
   process arguments or the profile file.
