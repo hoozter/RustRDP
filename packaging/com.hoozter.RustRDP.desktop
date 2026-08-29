@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RustRDP
+Comment=Connect to remote Windows computers with FreeRDP
+Exec=rustrdp
+Icon=rustrdp
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=RDP;Remote Desktop;FreeRDP;
+StartupNotify=true
+StartupWMClass=com.hoozter.RustRDP

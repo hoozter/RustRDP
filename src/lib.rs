@@ -1,0 +1,10 @@
+pub mod app;
+pub mod autostart;
+pub mod credentials;
+pub mod freerdp;
+pub mod icons;
+pub mod model;
+pub mod sessions;
+pub mod storage;
+pub mod theme;
+pub mod tray;
