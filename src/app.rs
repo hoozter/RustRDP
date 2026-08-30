@@ -128,7 +128,7 @@ impl RustRdpApp {
         };
         let backend = FreeRdpBackend::detect().map_err(|error| error.to_string());
         let (tray_tx, tray_actions) = unbounded();
-        let tray = match TrayIntegration::start(tray_tx, &data.profiles) {
+        let tray = match TrayIntegration::start(tray_tx, cc.egui_ctx.clone(), &data.profiles) {
             Ok(tray) => Some(tray),
             Err(error) => {
                 tracing::warn!(%error, "system tray unavailable");
@@ -966,7 +966,7 @@ impl eframe::App for RustRdpApp {
         self.process_tray_actions(&ctx);
         if self.minimize_on_first_frame {
             self.minimize_on_first_frame = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            hide_main_window(&ctx);
         }
         if self.sessions.poll() {
             self.update_tray();
@@ -990,7 +990,7 @@ impl eframe::App for RustRdpApp {
             && self.tray.is_some()
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            hide_main_window(&ctx);
             self.success("RustRDP is still available in the system tray");
         }
         egui::CentralPanel::default()
@@ -2300,7 +2300,17 @@ fn show_main_window(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-    if !desktop::set_window_minimized(std::process::id(), false) {
+    if !desktop::set_app_tray_hidden(std::process::id(), false) {
         tracing::debug!("KWin restore was unavailable; used the native viewport request");
+    }
+}
+
+fn hide_main_window(ctx: &egui::Context) {
+    // Keep winit's minimized state in sync even when KWin also removes the
+    // window from desktop lists. eframe uses this state to service tray
+    // repaint requests without waiting for a compositor redraw.
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    if !desktop::set_app_tray_hidden(std::process::id(), true) {
+        tracing::debug!("KWin tray hiding was unavailable; used native minimization");
     }
 }

@@ -1,5 +1,6 @@
-use crate::model::Profile;
+use crate::{desktop, model::Profile};
 use crossbeam_channel::Sender;
+use eframe::egui::Context;
 use ksni::blocking::{Handle, TrayMethods};
 use uuid::Uuid;
 
@@ -21,6 +22,7 @@ struct TrayProfile {
 #[derive(Clone, Debug)]
 struct RustRdpTray {
     actions: Sender<TrayAction>,
+    repaint: Context,
     profiles: Vec<TrayProfile>,
     active_sessions: Vec<String>,
 }
@@ -39,7 +41,9 @@ impl ksni::Tray for RustRdpTray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
+        tracing::debug!("tray requested main window");
         let _ = self.actions.send(TrayAction::OpenWindow);
+        wake_app(&self.repaint);
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
@@ -79,6 +83,7 @@ impl ksni::Tray for RustRdpTray {
             profiles.sort_by_key(|profile| (!profile.favorite, profile.name.to_lowercase()));
             for profile in profiles {
                 let actions = self.actions.clone();
+                let repaint = self.repaint.clone();
                 let id = profile.id;
                 menu.push(
                     StandardItem {
@@ -89,7 +94,9 @@ impl ksni::Tray for RustRdpTray {
                         },
                         icon_name: "network-connect".to_owned(),
                         activate: Box::new(move |_| {
+                            tracing::debug!(profile_id = %id, "tray requested connection");
                             let _ = actions.send(TrayAction::Connect(id));
+                            wake_app(&repaint);
                         }),
                         ..Default::default()
                     }
@@ -99,24 +106,30 @@ impl ksni::Tray for RustRdpTray {
             menu.push(MenuItem::Separator);
         }
         let actions = self.actions.clone();
+        let repaint = self.repaint.clone();
         menu.push(
             StandardItem {
                 label: "Open RustRDP".to_owned(),
                 icon_name: "rustrdp".to_owned(),
                 activate: Box::new(move |_| {
+                    tracing::debug!("tray requested main window");
                     let _ = actions.send(TrayAction::OpenWindow);
+                    wake_app(&repaint);
                 }),
                 ..Default::default()
             }
             .into(),
         );
         let actions = self.actions.clone();
+        let repaint = self.repaint.clone();
         menu.push(
             StandardItem {
                 label: "Settings".to_owned(),
                 icon_name: "settings-configure".to_owned(),
                 activate: Box::new(move |_| {
+                    tracing::debug!("tray requested settings");
                     let _ = actions.send(TrayAction::OpenSettings);
+                    wake_app(&repaint);
                 }),
                 ..Default::default()
             }
@@ -124,12 +137,15 @@ impl ksni::Tray for RustRdpTray {
         );
         menu.push(MenuItem::Separator);
         let actions = self.actions.clone();
+        let repaint = self.repaint.clone();
         menu.push(
             StandardItem {
                 label: "Quit".to_owned(),
                 icon_name: "application-exit".to_owned(),
                 activate: Box::new(move |_| {
+                    tracing::debug!("tray requested quit");
                     let _ = actions.send(TrayAction::Quit);
+                    wake_app(&repaint);
                 }),
                 ..Default::default()
             }
@@ -144,9 +160,14 @@ pub struct TrayIntegration {
 }
 
 impl TrayIntegration {
-    pub fn start(actions: Sender<TrayAction>, profiles: &[Profile]) -> Result<Self, String> {
+    pub fn start(
+        actions: Sender<TrayAction>,
+        repaint: Context,
+        profiles: &[Profile],
+    ) -> Result<Self, String> {
         let tray = RustRdpTray {
             actions,
+            repaint,
             profiles: snapshot_profiles(profiles),
             active_sessions: Vec::new(),
         };
@@ -161,6 +182,13 @@ impl TrayIntegration {
             tray.active_sessions = active_sessions;
         });
     }
+}
+
+fn wake_app(repaint: &Context) {
+    // KWin can withhold redraws from a minimized Wayland surface. Restore it
+    // first so the queued action is guaranteed a frame in which to run.
+    desktop::set_app_tray_hidden(std::process::id(), false);
+    repaint.request_repaint();
 }
 
 fn snapshot_profiles(profiles: &[Profile]) -> Vec<TrayProfile> {
