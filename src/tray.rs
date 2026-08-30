@@ -96,7 +96,7 @@ impl ksni::Tray for RustRdpTray {
                         activate: Box::new(move |_| {
                             tracing::debug!(profile_id = %id, "tray requested connection");
                             let _ = actions.send(TrayAction::Connect(id));
-                            wake_app(&repaint);
+                            wake_ui(&repaint);
                         }),
                         ..Default::default()
                     }
@@ -145,7 +145,7 @@ impl ksni::Tray for RustRdpTray {
                 activate: Box::new(move |_| {
                     tracing::debug!("tray requested quit");
                     let _ = actions.send(TrayAction::Quit);
-                    wake_app(&repaint);
+                    wake_ui(&repaint);
                 }),
                 ..Default::default()
             }
@@ -188,6 +188,10 @@ fn wake_app(repaint: &Context) {
     // KWin can withhold redraws from a minimized Wayland surface. Restore it
     // first so the queued action is guaranteed a frame in which to run.
     desktop::set_app_tray_hidden(std::process::id(), false);
+    repaint.request_repaint();
+}
+
+fn wake_ui(repaint: &Context) {
     repaint.request_repaint();
 }
 

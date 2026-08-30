@@ -237,6 +237,12 @@ impl SessionManager {
         }
     }
 
+    pub fn reconnect_profile(&self, session_id: Uuid) -> Option<Profile> {
+        self.sessions.get(&session_id).and_then(|session| {
+            matches!(session.state, SessionState::Exited(_)).then(|| session.profile.clone())
+        })
+    }
+
     pub fn take_saved_credential_failure(&mut self) -> Option<Profile> {
         self.sessions.values_mut().find_map(|session| {
             let rejected = session.used_saved_credential
@@ -283,7 +289,7 @@ fn watch_process(
                     desktop::set_window_minimized(child.id(), true);
                 }
                 ControllerAction::OpenApp => {
-                    desktop::set_window_minimized(std::process::id(), false);
+                    desktop::set_app_tray_hidden(std::process::id(), false);
                 }
                 ControllerAction::Disconnect => {
                     requested_disconnect = true;
@@ -722,5 +728,33 @@ mod tests {
 
         assert_eq!(manager.take_saved_credential_failure(), Some(profile));
         assert!(manager.take_saved_credential_failure().is_none());
+    }
+
+    #[test]
+    fn reconnect_uses_the_finished_sessions_original_profile() {
+        let profile = Profile {
+            name: "Work PC".to_owned(),
+            ..Profile::default()
+        };
+        let id = Uuid::new_v4();
+        let mut manager = SessionManager::default();
+        manager.sessions.insert(
+            id,
+            Session {
+                id,
+                profile_id: profile.id,
+                profile_name: profile.name.clone(),
+                pid: 123,
+                state: SessionState::Active,
+                profile: profile.clone(),
+                used_saved_credential: false,
+                credential_failure_handled: false,
+            },
+        );
+
+        assert!(manager.reconnect_profile(id).is_none());
+        manager.sessions.get_mut(&id).unwrap().state =
+            SessionState::Exited(classify_exit(Some(0), "", false));
+        assert_eq!(manager.reconnect_profile(id), Some(profile));
     }
 }

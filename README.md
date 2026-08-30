@@ -8,6 +8,8 @@ scaling on Wayland.
 ## Features
 
 - Create, edit, duplicate, favorite, search, and delete connection profiles.
+- Export and import versioned connection backups; passwords never leave the
+  source computer's desktop wallet.
 - Quick Connect for testing a host without creating a profile, with a bounded
   password-free recent list and a one-click path to save useful entries later.
 - Cohesive native Wayland workspace with saved-connection navigation, semantic
@@ -23,9 +25,9 @@ scaling on Wayland.
 - Password handoff through FreeRDP's forced stdin mode; passwords never enter
   process arguments or the profile file.
 - Optional Secret Service storage (KWallet, GNOME Keyring, or compatible wallet).
-- StatusNotifierItem tray menu, XDG autostart, multiple sessions, useful error
-  messages, and an auto-hiding per-session safety bar with open-app, minimize,
-  pin, and disconnect controls.
+- StatusNotifierItem tray menu, XDG autostart, multiple sessions, one-click
+  reconnect after a session ends, useful error messages, and an auto-hiding
+  per-session safety bar with open-app, minimize, pin, and disconnect controls.
 
 ## Requirements
 
@@ -33,6 +35,7 @@ scaling on Wayland.
   safe-fullscreen experience and reliable close-to-tray restoration.
 - The FreeRDP SDL3 client (`freerdp-sdl` on Debian/Ubuntu-family systems).
 - A Secret Service provider if saved passwords are desired.
+- `kdialog` (KDE) or `zenity` (other desktops) for connection backup pickers.
 - Rust 1.85 or newer to build from source.
 
 Install the required client on Debian/Ubuntu-family systems with:

@@ -1,10 +1,17 @@
-use crate::model::{AppData, CURRENT_SCHEMA_VERSION};
+use crate::model::{AppData, CURRENT_SCHEMA_VERSION, Profile, ProfileError};
 use directories::ProjectDirs;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 const CONFIG_FILE: &str = "config.toml";
+const PROFILE_ARCHIVE_VERSION: u32 = 1;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ProfileArchive {
+    archive_version: u32,
+    profiles: Vec<Profile>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -19,6 +26,15 @@ pub enum StorageError {
     },
     #[error("configuration schema {found} is newer than this application supports ({supported})")]
     NewerSchema { found: u32, supported: u32 },
+    #[error(
+        "connection backup version {found} is newer than this application supports ({supported})"
+    )]
+    NewerArchive { found: u32, supported: u32 },
+    #[error("connection backup contains an invalid profile '{profile}': {source}")]
+    InvalidProfile {
+        profile: String,
+        source: ProfileError,
+    },
     #[error("could not serialize configuration: {0}")]
     Serialize(#[from] toml::ser::Error),
     #[error("could not save {path}: {source}")]
@@ -57,6 +73,50 @@ pub fn load(path: &Path) -> Result<AppData, StorageError> {
 
 pub fn save(path: &Path, data: &AppData) -> Result<(), StorageError> {
     let text = toml::to_string_pretty(data)?;
+    write_atomic(path, &text)
+}
+
+pub fn export_profiles(path: &Path, profiles: &[Profile]) -> Result<(), StorageError> {
+    let mut profiles = profiles.to_vec();
+    for profile in &mut profiles {
+        profile.connection.save_password = false;
+    }
+    let text = toml::to_string_pretty(&ProfileArchive {
+        archive_version: PROFILE_ARCHIVE_VERSION,
+        profiles,
+    })?;
+    write_atomic(path, &text)
+}
+
+pub fn import_profiles(path: &Path) -> Result<Vec<Profile>, StorageError> {
+    let text = fs::read_to_string(path).map_err(|source| StorageError::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+    let mut archive: ProfileArchive =
+        toml::from_str(&text).map_err(|source| StorageError::Parse {
+            path: path.to_owned(),
+            source,
+        })?;
+    if archive.archive_version > PROFILE_ARCHIVE_VERSION {
+        return Err(StorageError::NewerArchive {
+            found: archive.archive_version,
+            supported: PROFILE_ARCHIVE_VERSION,
+        });
+    }
+    for profile in &mut archive.profiles {
+        profile
+            .validate()
+            .map_err(|source| StorageError::InvalidProfile {
+                profile: profile.name.clone(),
+                source,
+            })?;
+        profile.connection.save_password = false;
+    }
+    Ok(archive.profiles)
+}
+
+fn write_atomic(path: &Path, text: &str) -> Result<(), StorageError> {
     let parent = path.parent().ok_or_else(|| StorageError::Write {
         path: path.to_owned(),
         source: io::Error::new(
@@ -68,7 +128,11 @@ pub fn save(path: &Path, data: &AppData) -> Result<(), StorageError> {
         path: parent.to_owned(),
         source,
     })?;
-    let temporary = parent.join(format!(".{CONFIG_FILE}.tmp-{}", std::process::id()));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("data");
+    let temporary = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
     let result = (|| {
         let mut options = OpenOptions::new();
         options.create(true).truncate(true).write(true);
@@ -138,5 +202,43 @@ mod tests {
         fs::write(&path, "schema_version = 1\nprofiles = []\n").unwrap();
         let data = load(&path).unwrap();
         assert!(data.recent_connections.is_empty());
+    }
+
+    #[test]
+    fn profile_archive_round_trip_excludes_credential_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.toml");
+        let profile = Profile {
+            name: "Work PC".to_owned(),
+            connection: crate::model::Connection {
+                host: "work.example.com".to_owned(),
+                save_password: true,
+                ..crate::model::Connection::default()
+            },
+            ..Profile::default()
+        };
+
+        export_profiles(&path, &[profile]).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("save_password = true"));
+        let imported = import_profiles(&path).unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].name, "Work PC");
+        assert!(!imported[0].connection.save_password);
+    }
+
+    #[test]
+    fn profile_archive_rejects_invalid_connections() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.toml");
+        fs::write(
+            &path,
+            "archive_version = 1\n[[profiles]]\nname = 'Broken'\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            import_profiles(&path),
+            Err(StorageError::InvalidProfile { .. })
+        ));
     }
 }

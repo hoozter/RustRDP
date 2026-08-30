@@ -2,15 +2,19 @@ use crate::autostart;
 use crate::credentials::CredentialStore;
 use crate::desktop;
 use crate::display::DisplayCatalog;
+use crate::file_dialog;
 use crate::freerdp::FreeRdpBackend;
 use crate::icons;
-use crate::model::{AppData, DisplayMode, Drive, Profile, QuickConnection, Resolution, ThemeMode};
+use crate::model::{
+    AppData, DisplayMode, Drive, Profile, QuickConnection, Resolution, Settings, ThemeMode,
+};
 use crate::sessions::{SessionManager, SessionState};
 use crate::storage;
 use crate::theme::{self, Colors};
 use crate::tray::{TrayAction, TrayIntegration};
 use crossbeam_channel::{Receiver, unbounded};
 use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
@@ -80,6 +84,18 @@ enum QuickAction {
     Connect(QuickConnection),
     Save(QuickConnection),
     Load(QuickConnection),
+}
+
+enum SessionAction {
+    None,
+    Reconnect(Profile),
+}
+
+#[derive(Clone, Copy)]
+enum DataAction {
+    None,
+    Export,
+    Import,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -557,6 +573,10 @@ impl RustRdpApp {
         let mut summary_action = SummaryAction::None;
         let mut quick_action = QuickAction::None;
         root.add_space(12.0);
+        if let Err(error) = &self.backend {
+            backend_required_banner(root, error, self.colors);
+            root.add_space(12.0);
+        }
         if self.main_view == MainView::QuickConnect {
             quick_action = quick_connect_view(
                 root,
@@ -578,7 +598,7 @@ impl RustRdpApp {
             empty_state(root, self.colors);
         }
         root.add_space(16.0);
-        session_list(root, &mut self.sessions, self.colors);
+        let session_action = session_list(root, &mut self.sessions, self.colors);
         match quick_action {
             QuickAction::None => {}
             QuickAction::Connect(connection) => self.connect_quick(connection),
@@ -628,6 +648,12 @@ impl RustRdpApp {
                 }
             }
         }
+        match session_action {
+            SessionAction::None => {}
+            SessionAction::Reconnect(profile) => {
+                self.request_connect_profile(profile, true);
+            }
+        }
     }
 
     fn show_settings_window(&mut self, ctx: &egui::Context) {
@@ -637,6 +663,7 @@ impl RustRdpApp {
         let mut open = self.show_settings;
         let mut changed = false;
         let mut autostart_changed = None;
+        let mut data_action = DataAction::None;
         let previous_start_with_system = self.data.settings.start_with_system;
         let previous_start_minimized = self.data.settings.start_minimized;
         let previous_close_to_tray = self.data.settings.close_to_tray;
@@ -644,106 +671,31 @@ impl RustRdpApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_width(640.0)
+            .default_width(820.0)
+            .default_height(560.0)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("application-settings")
                     .max_height(720.0)
                     .show(ui, |ui| {
-                        settings_card(
-                            ui,
-                            icons::SETTINGS,
-                            "General",
-                            "Choose how RustRDP behaves on this computer.",
-                            0.0,
-                            self.colors,
-                            |ui| {
-                                setting_toggle_row(
-                                    ui,
-                                    icons::PLAY,
-                                    "Start when I log in",
-                                    "Keep saved connections ready from the system tray.",
-                                    &mut self.data.settings.start_with_system,
-                                    self.colors,
-                                );
-                                ui.add_space(8.0);
-                                setting_toggle_row(
-                                    ui,
-                                    icons::VISIBILITY_OFF,
-                                    "Start minimized",
-                                    "Open in the system tray instead of showing the window.",
-                                    &mut self.data.settings.start_minimized,
-                                    self.colors,
-                                );
-                                ui.add_space(8.0);
-                                setting_toggle_row(
-                                    ui,
-                                    icons::CLOSE,
-                                    "Close to the tray",
-                                    "Keep RustRDP running when the main window is closed.",
-                                    &mut self.data.settings.close_to_tray,
-                                    self.colors,
-                                );
-                            },
-                        );
-                        ui.add_space(10.0);
-                        settings_card(
-                            ui,
-                            icons::LOCK,
-                            "Security",
-                            "Passwords stay outside the connection profile.",
-                            0.0,
-                            self.colors,
-                            |ui| match CredentialStore::availability() {
-                                Ok(()) => info_banner(
-                                    ui,
-                                    icons::LOCK,
-                                    "Desktop wallet is available. Saved passwords are protected by Secret Service and are never written to the RustRDP configuration file.",
-                                    self.colors,
-                                ),
-                                Err(error) => {
-                                    ui.colored_label(self.colors.error, error.to_string());
-                                }
-                            },
-                        );
-                        ui.add_space(10.0);
-                        settings_card(
-                            ui,
-                            icons::TUNE,
-                            "Appearance",
-                            "Use the system theme or choose a fixed appearance.",
-                            0.0,
-                            self.colors,
-                            |ui| {
-                                field_label(ui, "Theme", self.colors);
-                                egui::ComboBox::from_id_salt("application-theme")
-                                    .width(ui.available_width())
-                                    .selected_text(theme_name(self.data.settings.theme))
-                                    .show_ui(ui, |ui| {
-                                        changed |= ui
-                                            .selectable_value(
-                                                &mut self.data.settings.theme,
-                                                ThemeMode::System,
-                                                "Follow system",
-                                            )
-                                            .changed();
-                                        changed |= ui
-                                            .selectable_value(
-                                                &mut self.data.settings.theme,
-                                                ThemeMode::Light,
-                                                "Light",
-                                            )
-                                            .changed();
-                                        changed |= ui
-                                            .selectable_value(
-                                                &mut self.data.settings.theme,
-                                                ThemeMode::Dark,
-                                                "Dark",
-                                            )
-                                            .changed();
-                                    });
-                            },
-                        );
+                        ui.columns(2, |columns| {
+                            let (left, right) = columns.split_at_mut(1);
+                            general_settings_card(
+                                &mut left[0],
+                                &mut self.data.settings,
+                                self.colors,
+                            );
+                            left[0].add_space(10.0);
+                            security_settings_card(&mut left[0], self.colors);
+
+                            changed |= appearance_settings_card(
+                                &mut right[0],
+                                &mut self.data.settings.theme,
+                                self.colors,
+                            );
+                            right[0].add_space(10.0);
+                            data_action = backup_settings_card(&mut right[0], self.colors);
+                        });
                     });
             });
         if self.data.settings.start_with_system != previous_start_with_system {
@@ -762,6 +714,85 @@ impl RustRdpApp {
         if changed {
             self.colors = theme::apply(ctx, self.data.settings.theme);
             self.persist();
+        }
+        match data_action {
+            DataAction::None => {}
+            DataAction::Export => self.export_connections(),
+            DataAction::Import => self.import_connections(),
+        }
+    }
+
+    fn export_connections(&mut self) {
+        if self.data.profiles.is_empty() {
+            self.error("There are no saved connections to export");
+            return;
+        }
+        match file_dialog::choose_export_path() {
+            Ok(Some(mut path)) => {
+                if path.extension().is_none() {
+                    path.set_extension("toml");
+                }
+                match storage::export_profiles(&path, &self.data.profiles) {
+                    Ok(()) => self.success(format!(
+                        "Exported {} connection{} to {}",
+                        self.data.profiles.len(),
+                        if self.data.profiles.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        },
+                        path.display()
+                    )),
+                    Err(error) => self.error(error.to_string()),
+                }
+            }
+            Ok(None) => {}
+            Err(error) => self.error(error.to_string()),
+        }
+    }
+
+    fn import_connections(&mut self) {
+        let path = match file_dialog::choose_import_path() {
+            Ok(Some(path)) => path,
+            Ok(None) => return,
+            Err(error) => {
+                self.error(error.to_string());
+                return;
+            }
+        };
+        match storage::import_profiles(&path) {
+            Ok(mut profiles) => {
+                if profiles.is_empty() {
+                    self.error("The selected backup contains no connections");
+                    return;
+                }
+                let mut ids: HashSet<_> = self
+                    .data
+                    .profiles
+                    .iter()
+                    .map(|profile| profile.id)
+                    .collect();
+                for profile in &mut profiles {
+                    if !ids.insert(profile.id) {
+                        profile.id = Uuid::new_v4();
+                        while !ids.insert(profile.id) {
+                            profile.id = Uuid::new_v4();
+                        }
+                    }
+                }
+                let count = profiles.len();
+                let first = profiles[0].id;
+                self.data.profiles.extend(profiles);
+                self.selected = Some(first);
+                self.main_view = MainView::Connections;
+                self.persist();
+                self.success(format!(
+                    "Imported {count} connection{} from {}",
+                    if count == 1 { "" } else { "s" },
+                    path.display()
+                ));
+            }
+            Err(error) => self.error(error.to_string()),
         }
     }
 
@@ -1705,7 +1736,7 @@ fn profile_editor(
     action
 }
 
-fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors) {
+fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors) -> SessionAction {
     let snapshot: Vec<_> = sessions
         .sessions()
         .map(|session| {
@@ -1718,12 +1749,13 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
         })
         .collect();
     if snapshot.is_empty() {
-        return;
+        return SessionAction::None;
     }
     ui.separator();
     section_heading(ui, "Sessions", colors);
     let mut disconnect = None;
     let mut dismiss = None;
+    let mut reconnect = None;
     for (id, name, pid, state) in snapshot {
         ui.horizontal(|ui| {
             let (label, color) = match &state {
@@ -1744,6 +1776,9 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
                 SessionState::Exited(exit) => {
                     if ui.button("Dismiss").clicked() {
                         dismiss = Some(id);
+                    }
+                    if ui.button("Reconnect").clicked() {
+                        reconnect = Some(id);
                     }
                     ui.label(RichText::new(&exit.message).small().color(colors.dim));
                 }
@@ -1786,6 +1821,9 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
     if let Some(id) = dismiss {
         sessions.dismiss_exited(id);
     }
+    reconnect
+        .and_then(|id| sessions.reconnect_profile(id))
+        .map_or(SessionAction::None, SessionAction::Reconnect)
 }
 
 fn empty_state(ui: &mut egui::Ui, colors: Colors) {
@@ -1856,6 +1894,128 @@ fn settings_card(
             ui.add_space(9.0);
             content(ui);
         });
+}
+
+fn general_settings_card(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
+    settings_card(
+        ui,
+        icons::SETTINGS,
+        "General",
+        "Choose how RustRDP behaves on this computer.",
+        0.0,
+        colors,
+        |ui| {
+            setting_toggle_row(
+                ui,
+                icons::PLAY,
+                "Start when I log in",
+                "Keep saved connections ready in the tray.",
+                &mut settings.start_with_system,
+                colors,
+            );
+            ui.add_space(6.0);
+            setting_toggle_row(
+                ui,
+                icons::VISIBILITY_OFF,
+                "Start minimized",
+                "Open in the tray instead of showing the window.",
+                &mut settings.start_minimized,
+                colors,
+            );
+            ui.add_space(6.0);
+            setting_toggle_row(
+                ui,
+                icons::CLOSE,
+                "Close to the tray",
+                "Keep RustRDP running when this window closes.",
+                &mut settings.close_to_tray,
+                colors,
+            );
+        },
+    );
+}
+
+fn security_settings_card(ui: &mut egui::Ui, colors: Colors) {
+    settings_card(
+        ui,
+        icons::LOCK,
+        "Security",
+        "Passwords stay outside connection profiles.",
+        0.0,
+        colors,
+        |ui| match CredentialStore::availability() {
+            Ok(()) => info_banner(
+                ui,
+                icons::LOCK,
+                "Desktop wallet available. Saved passwords are protected by Secret Service.",
+                colors,
+            ),
+            Err(error) => {
+                ui.colored_label(colors.error, error.to_string());
+            }
+        },
+    );
+}
+
+fn appearance_settings_card(ui: &mut egui::Ui, theme: &mut ThemeMode, colors: Colors) -> bool {
+    let mut changed = false;
+    settings_card(
+        ui,
+        icons::TUNE,
+        "Appearance",
+        "Follow the desktop or choose a fixed theme.",
+        0.0,
+        colors,
+        |ui| {
+            field_label(ui, "Theme", colors);
+            egui::ComboBox::from_id_salt("application-theme")
+                .width(ui.available_width())
+                .selected_text(theme_name(*theme))
+                .show_ui(ui, |ui| {
+                    changed |= ui
+                        .selectable_value(theme, ThemeMode::System, "Follow system")
+                        .changed();
+                    changed |= ui
+                        .selectable_value(theme, ThemeMode::Light, "Light")
+                        .changed();
+                    changed |= ui
+                        .selectable_value(theme, ThemeMode::Dark, "Dark")
+                        .changed();
+                });
+        },
+    );
+    changed
+}
+
+fn backup_settings_card(ui: &mut egui::Ui, colors: Colors) -> DataAction {
+    let mut action = DataAction::None;
+    settings_card(
+        ui,
+        icons::SAVE,
+        "Connection backups",
+        "Move saved connections without exporting passwords.",
+        0.0,
+        colors,
+        |ui| {
+            ui.horizontal(|ui| {
+                if toolbar_button(ui, icons::EXPORT, "Export", colors).clicked() {
+                    action = DataAction::Export;
+                }
+                if toolbar_button(ui, icons::IMPORT, "Import", colors).clicked() {
+                    action = DataAction::Import;
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "Includes display and resource settings. Passwords remain in this computer's wallet.",
+                )
+                .small()
+                .color(colors.dim),
+            );
+        },
+    );
+    action
 }
 
 fn summary_card(
@@ -2191,6 +2351,35 @@ fn info_banner(ui: &mut egui::Ui, icon: &str, text: &str, colors: Colors) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(icon).size(16.0).color(colors.accent));
                 ui.add(egui::Label::new(RichText::new(text).small().color(colors.dim)).wrap());
+            });
+        });
+}
+
+fn backend_required_banner(ui: &mut egui::Ui, error: &str, colors: Colors) {
+    egui::Frame::new()
+        .fill(colors.panel)
+        .stroke(egui::Stroke::new(1.0, colors.error))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(14, 12))
+        .show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                ui.label(RichText::new(icons::ERROR).size(22.0).color(colors.error));
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new("FreeRDP SDL3 is required")
+                            .strong()
+                            .color(colors.heading),
+                    );
+                    ui.label(RichText::new(error).color(colors.dim));
+                    ui.add_space(7.0);
+                    ui.horizontal(|ui| {
+                        ui.monospace("sudo apt install freerdp-sdl");
+                        if ui.button("Copy command").clicked() {
+                            ui.ctx()
+                                .copy_text("sudo apt install freerdp-sdl".to_owned());
+                        }
+                    });
+                });
             });
         });
 }

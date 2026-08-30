@@ -3,6 +3,7 @@ pub mod autostart;
 pub mod credentials;
 pub mod desktop;
 pub mod display;
+pub mod file_dialog;
 pub mod freerdp;
 pub mod icons;
 pub mod model;

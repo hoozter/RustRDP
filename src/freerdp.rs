@@ -50,6 +50,8 @@ pub enum BackendError {
     UnsafeCredentialHandoff,
     #[error("the selected FreeRDP client does not support dynamic resolution")]
     DynamicResolutionUnsupported,
+    #[error("the selected FreeRDP client does not support {0} redirection")]
+    RedirectionUnsupported(&'static str),
 }
 
 impl FreeRdpBackend {
@@ -109,6 +111,33 @@ impl FreeRdpBackend {
         }
         if profile.display.dynamic_resolution && !self.capabilities.dynamic_resolution {
             return Err(BackendError::DynamicResolutionUnsupported);
+        }
+        for (enabled, supported, name) in [
+            (
+                profile.resources.clipboard,
+                self.capabilities.clipboard,
+                "clipboard",
+            ),
+            (
+                profile.resources.printers,
+                self.capabilities.printers,
+                "printer",
+            ),
+            (profile.resources.audio, self.capabilities.audio, "audio"),
+            (
+                profile.resources.microphone,
+                self.capabilities.microphone,
+                "microphone",
+            ),
+            (
+                !profile.resources.drives.is_empty(),
+                self.capabilities.drives,
+                "local folder",
+            ),
+        ] {
+            if enabled && !supported {
+                return Err(BackendError::RedirectionUnsupported(name));
+            }
         }
         let mut arguments = vec![OsString::from(format!(
             "/v:{}",
@@ -343,6 +372,16 @@ mod tests {
         assert!(matches!(
             backend.build_connection(&Profile::default(), true),
             Err(BackendError::UnsafeCredentialHandoff)
+        ));
+    }
+
+    #[test]
+    fn rejects_selected_redirection_that_the_backend_does_not_support() {
+        let mut backend = capable_backend();
+        backend.capabilities.printers = false;
+        assert!(matches!(
+            backend.build_connection(&Profile::default(), false),
+            Err(BackendError::RedirectionUnsupported("printer"))
         ));
     }
 }
