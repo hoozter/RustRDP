@@ -11,4 +11,8 @@ rsvg-convert --width 256 --height 256 \
     --output "$project_dir/assets/rustrdp.png" \
     "$project_dir/assets/rustrdp.svg"
 
-printf '%s\n' "Rendered assets/rustrdp.png from assets/rustrdp.svg"
+rsvg-convert --width 868 --height 124 \
+    --output "$project_dir/assets/rustrdp-full.png" \
+    "$project_dir/assets/rustrdp-full.svg"
+
+printf '%s\n' "Rendered RustRDP icon and full logo PNG assets"

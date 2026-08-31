@@ -64,10 +64,11 @@ back in, or refresh the application launcher, if it does not appear immediately.
 
 ## Application icon
 
-`assets/rustrdp.svg` is the single source for RustRDP branding. It is used by
-the desktop launcher and tray, while the generated `assets/rustrdp.png` is
-embedded in the application window and taskbar metadata. To install a new logo,
-replace the SVG, regenerate the embedded PNG, then rebuild:
+`assets/rustrdp.svg` is the icon source used by the desktop launcher, tray,
+window, and taskbar. `assets/rustrdp-full.svg` is the full wordmark shown in the
+application header. Their generated PNG counterparts are embedded where egui
+or desktop metadata requires raster artwork. After changing either SVG,
+regenerate the PNGs and rebuild:
 
 ```sh
 ./scripts/render-icons.sh

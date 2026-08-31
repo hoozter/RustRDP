@@ -81,6 +81,7 @@ enum Event {
 pub struct SessionManager {
     sessions: BTreeMap<Uuid, Session>,
     controls: BTreeMap<Uuid, Sender<Control>>,
+    workers: BTreeMap<Uuid, thread::JoinHandle<()>>,
     events_tx: Sender<Event>,
     events_rx: Receiver<Event>,
 }
@@ -91,6 +92,7 @@ impl Default for SessionManager {
         Self {
             sessions: BTreeMap::new(),
             controls: BTreeMap::new(),
+            workers: BTreeMap::new(),
             events_tx,
             events_rx,
         }
@@ -101,6 +103,9 @@ impl Drop for SessionManager {
     fn drop(&mut self) {
         for control in self.controls.values() {
             let _ = control.send(Control::Disconnect);
+        }
+        for (_, worker) in std::mem::take(&mut self.workers) {
+            let _ = worker.join();
         }
     }
 }
@@ -169,11 +174,12 @@ impl SessionManager {
         let (control_tx, control_rx) = unbounded();
         let events = self.events_tx.clone();
         let stderr = child.stderr.take();
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name(format!("rustrdp-session-{id}"))
             .spawn(move || watch_process(id, child, stderr, control_rx, events, controller))
             .map_err(SessionError::Spawn)?;
         self.controls.insert(id, control_tx);
+        self.workers.insert(id, worker);
         self.sessions.insert(
             id,
             Session {
@@ -218,6 +224,9 @@ impl SessionManager {
                 }
                 Event::Exited(id, exit) => {
                     self.controls.remove(&id);
+                    if let Some(worker) = self.workers.remove(&id) {
+                        let _ = worker.join();
+                    }
                     if let Some(session) = self.sessions.get_mut(&id) {
                         session.state = SessionState::Exited(exit);
                     }
@@ -705,6 +714,25 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         panic!("child process exit was not observed");
+    }
+
+    #[test]
+    fn dropping_the_manager_reaps_a_running_session_before_returning() {
+        let profile = Profile::default();
+        let command = ConnectionCommand {
+            program: PathBuf::from("/bin/sleep"),
+            arguments: vec![OsString::from("30")],
+            password_via_stdin: false,
+        };
+        let mut manager = SessionManager::default();
+        let id = manager
+            .launch(&profile, command, None, false, false)
+            .unwrap();
+        let pid = manager.sessions.get(&id).unwrap().pid;
+
+        drop(manager);
+
+        assert!(!PathBuf::from(format!("/proc/{pid}")).exists());
     }
 
     #[test]

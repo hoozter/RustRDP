@@ -41,7 +41,7 @@ pub struct RustRdpApp {
     minimize_on_first_frame: bool,
     colors: Colors,
     display_catalog: DisplayCatalog,
-    app_logo: egui::TextureHandle,
+    full_logo: egui::TextureHandle,
 }
 
 struct PasswordPrompt {
@@ -120,11 +120,12 @@ impl RustRdpApp {
             .or_default()
             .push("material-icons".to_owned());
         cc.egui_ctx.set_fonts(fonts);
-        let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/rustrdp.png"))
-            .expect("the bundled RustRDP icon must be a valid PNG");
-        let app_logo = cc.egui_ctx.load_texture(
-            "rustrdp-logo",
-            egui::ColorImage::from(&icon),
+        let full_logo_icon =
+            eframe::icon_data::from_png_bytes(include_bytes!("../assets/rustrdp-full.png"))
+                .expect("the bundled RustRDP full logo must be a valid PNG");
+        let full_logo = cc.egui_ctx.load_texture(
+            "rustrdp-full-logo",
+            egui::ColorImage::from(&full_logo_icon),
             egui::TextureOptions::LINEAR,
         );
         let config_path = storage::default_config_path().ok();
@@ -176,7 +177,7 @@ impl RustRdpApp {
             minimize_on_first_frame: start_minimized,
             colors,
             display_catalog: DisplayCatalog::detect(),
-            app_logo,
+            full_logo,
         }
     }
 
@@ -412,24 +413,9 @@ impl RustRdpApp {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.add(
-                        egui::Image::new(&self.app_logo)
-                            .fit_to_exact_size(Vec2::splat(30.0))
-                            .corner_radius(6.0),
+                        egui::Image::new(&self.full_logo).fit_to_exact_size(Vec2::new(154.0, 22.0)),
                     );
-                    ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new("RustRDP")
-                                .size(17.0)
-                                .strong()
-                                .color(self.colors.heading),
-                        );
-                        ui.label(
-                            RichText::new("Remote desktop manager")
-                                .small()
-                                .color(self.colors.muted),
-                        );
-                    });
-                    ui.add_space(10.0);
+                    ui.add_space(12.0);
                     match &self.backend {
                         Ok(backend) => status_chip(
                             ui,
