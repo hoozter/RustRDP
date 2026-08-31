@@ -8,12 +8,12 @@ command -v rsvg-convert >/dev/null 2>&1 || {
 }
 
 for size in 16 22 32 48 64; do
-    rsvg-convert --width "$size" --height "$size" \
+    rsvg-convert --keep-aspect-ratio --width "$size" --height "$size" \
         --output "$project_dir/assets/rustrdp-$size.png" \
         "$project_dir/assets/rustrdp.svg"
 done
 
-rsvg-convert --width 256 --height 256 \
+rsvg-convert --keep-aspect-ratio --width 256 --height 256 \
     --output "$project_dir/assets/rustrdp.png" \
     "$project_dir/assets/rustrdp.svg"
 

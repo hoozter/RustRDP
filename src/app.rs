@@ -408,7 +408,7 @@ impl RustRdpApp {
                             "bytes://rustrdp-full.svg",
                             include_bytes!("../assets/rustrdp-full.svg"),
                         )
-                        .fit_to_exact_size(Vec2::new(154.0, 22.0)),
+                        .fit_to_exact_size(Vec2::new(160.0, 22.0)),
                     );
                     ui.add_space(12.0);
                     match &self.backend {
