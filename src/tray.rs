@@ -2,6 +2,7 @@ use crate::{desktop, model::Profile};
 use crossbeam_channel::Sender;
 use eframe::egui::Context;
 use ksni::blocking::{Handle, TrayMethods};
+use std::sync::LazyLock;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -37,7 +38,24 @@ impl ksni::Tray for RustRdpTray {
     }
 
     fn icon_name(&self) -> String {
-        "rustrdp".to_owned()
+        String::new()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        static ICON: LazyLock<ksni::Icon> = LazyLock::new(|| {
+            let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/rustrdp.png"))
+                .expect("the bundled RustRDP tray icon must be a valid PNG");
+            let mut data = icon.rgba;
+            for pixel in data.chunks_exact_mut(4) {
+                pixel.rotate_right(1);
+            }
+            ksni::Icon {
+                width: icon.width as i32,
+                height: icon.height as i32,
+                data,
+            }
+        });
+        vec![ICON.clone()]
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {

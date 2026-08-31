@@ -70,6 +70,9 @@ application header. Their generated PNG counterparts are embedded where egui
 or desktop metadata requires raster artwork. After changing either SVG,
 regenerate the PNGs and rebuild:
 
+For predictable rendering on every build machine, export wordmark lettering as
+vector curves/paths instead of leaving it as live SVG text.
+
 ```sh
 ./scripts/render-icons.sh
 ./scripts/install-local.sh

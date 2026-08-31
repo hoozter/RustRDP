@@ -11,7 +11,7 @@ rsvg-convert --width 256 --height 256 \
     --output "$project_dir/assets/rustrdp.png" \
     "$project_dir/assets/rustrdp.svg"
 
-rsvg-convert --width 868 --height 124 \
+rsvg-convert --width 308 --height 44 \
     --output "$project_dir/assets/rustrdp-full.png" \
     "$project_dir/assets/rustrdp-full.svg"
 

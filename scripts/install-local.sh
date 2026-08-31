@@ -11,6 +11,12 @@ install -Dm644 "$project_dir/assets/rustrdp-full.svg" "$HOME/.local/share/rustrd
 install -Dm644 "$project_dir/assets/session-controller.qml" "$HOME/.local/share/rustrdp/session-controller.qml"
 install -Dm644 "$project_dir/assets/MaterialSymbolsFilled.ttf" "$HOME/.local/share/rustrdp/MaterialSymbolsFilled.ttf"
 install -Dm644 "$project_dir/packaging/com.hoozter.RustRDP.desktop" "$HOME/.local/share/applications/com.hoozter.RustRDP.desktop"
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache --force --ignore-theme-index "$HOME/.local/share/icons/hicolor" >/dev/null
+fi
+if command -v kbuildsycoca6 >/dev/null 2>&1; then
+    kbuildsycoca6 --noincremental >/dev/null
+fi
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$HOME/.local/share/applications"
 fi
