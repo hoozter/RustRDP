@@ -10,6 +10,7 @@ pub enum TrayAction {
     OpenWindow,
     OpenSettings,
     Connect(Uuid),
+    ShowSession(Uuid),
     Quit,
 }
 
@@ -21,11 +22,17 @@ struct TrayProfile {
 }
 
 #[derive(Clone, Debug)]
+struct TraySession {
+    id: Uuid,
+    name: String,
+}
+
+#[derive(Clone, Debug)]
 struct RustRdpTray {
     actions: Sender<TrayAction>,
     repaint: Context,
     profiles: Vec<TrayProfile>,
-    active_sessions: Vec<String>,
+    active_sessions: Vec<TraySession>,
 }
 
 impl ksni::Tray for RustRdpTray {
@@ -75,11 +82,19 @@ impl ksni::Tray for RustRdpTray {
                 }
                 .into(),
             );
-            for name in &self.active_sessions {
+            for session in &self.active_sessions {
+                let actions = self.actions.clone();
+                let repaint = self.repaint.clone();
+                let id = session.id;
                 menu.push(
                     StandardItem {
-                        label: format!("● {name}"),
-                        enabled: false,
+                        label: format!("Show {}", session.name),
+                        icon_name: "view-restore".to_owned(),
+                        activate: Box::new(move |_| {
+                            tracing::debug!(session_id = %id, "tray requested remote window");
+                            let _ = actions.send(TrayAction::ShowSession(id));
+                            wake_ui(&repaint);
+                        }),
                         ..Default::default()
                     }
                     .into(),
@@ -206,8 +221,12 @@ impl TrayIntegration {
         Ok(Self { handle })
     }
 
-    pub fn update(&self, profiles: &[Profile], active_sessions: Vec<String>) {
+    pub fn update(&self, profiles: &[Profile], active_sessions: Vec<(Uuid, String)>) {
         let profiles = snapshot_profiles(profiles);
+        let active_sessions = active_sessions
+            .into_iter()
+            .map(|(id, name)| TraySession { id, name })
+            .collect();
         self.handle.update(move |tray| {
             tray.profiles = profiles;
             tray.active_sessions = active_sessions;

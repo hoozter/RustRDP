@@ -31,7 +31,7 @@ Window {
 
     width: expanded ? expandedWidth : collapsedWidth
     height: expanded ? expandedHeight : collapsedHeight
-    visible: sessionVisible
+    visible: true
     color: "transparent"
     flags: Qt.FramelessWindowHint
     title: profileName + " — RustRDP controls"
@@ -105,6 +105,12 @@ Window {
         if (minimizeObserved && active && !minimized) {
             minimizeRequested = false
             minimizeObserved = false
+        }
+        if (sessionVisible) {
+            if (!root.visible)
+                root.show()
+        } else if (root.visible) {
+            root.hide()
         }
     }
 
@@ -239,7 +245,7 @@ Window {
             }
 
             PanelButton {
-                glyph: "\ue55d"
+                glyph: "\uf10d"
                 accessibleName: root.pinned ? "Auto-hide controls" : "Keep controls open"
                 foreground: root.pinned ? "#4ea1f2" : "#dce3ea"
                 onTriggered: {
@@ -255,11 +261,19 @@ Window {
             }
 
             PanelButton {
-                glyph: "\ue15b"
-                accessibleName: "Minimize remote desktop"
+                glyph: root.minimizeRequested || root.remoteMinimized ? "\ue6fa" : "\ue15b"
+                accessibleName: root.minimizeRequested || root.remoteMinimized
+                    ? "Show remote desktop" : "Minimize remote desktop"
                 onTriggered: {
-                    root.minimizeRequested = true
-                    root.sendCommand("minimize")
+                    if (root.minimizeRequested || root.remoteMinimized) {
+                        root.minimizeRequested = false
+                        root.minimizeObserved = false
+                        root.sendCommand("restore")
+                    } else {
+                        root.minimizeRequested = true
+                        root.sendCommand("minimize")
+                        root.hide()
+                    }
                 }
             }
 

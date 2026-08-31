@@ -63,6 +63,8 @@ pub enum SessionError {
     CredentialHandoff(io::Error),
     #[error("could not start the fullscreen safety bar: {0}")]
     Controller(io::Error),
+    #[error("could not show the remote desktop window")]
+    WindowControl,
     #[error("session not found")]
     NotFound,
 }
@@ -210,6 +212,22 @@ impl SessionManager {
         Ok(())
     }
 
+    pub fn show(&self, session_id: Uuid) -> Result<(), SessionError> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(SessionError::NotFound)?;
+        if !matches!(
+            session.state,
+            SessionState::Connecting | SessionState::Active
+        ) {
+            return Err(SessionError::NotFound);
+        }
+        desktop::set_window_minimized(session.pid, false)
+            .then_some(())
+            .ok_or(SessionError::WindowControl)
+    }
+
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
         while let Ok(event) = self.events_rx.try_recv() {
@@ -297,6 +315,9 @@ fn watch_process(
                 ControllerAction::Minimize => {
                     desktop::set_window_minimized(child.id(), true);
                 }
+                ControllerAction::Restore => {
+                    desktop::set_window_minimized(child.id(), false);
+                }
                 ControllerAction::OpenApp => {
                     desktop::set_app_tray_hidden(std::process::id(), false);
                 }
@@ -331,6 +352,7 @@ enum ControllerAction {
     None,
     Ready,
     Minimize,
+    Restore,
     OpenApp,
     Disconnect,
 }
@@ -456,6 +478,8 @@ fn controller_request_from_text(request: &str, route_prefix: &str) -> Controller
         ControllerRequest::Action(ControllerAction::Ready)
     } else if method == "POST" && path == format!("{route_prefix}/minimize") {
         ControllerRequest::Action(ControllerAction::Minimize)
+    } else if method == "POST" && path == format!("{route_prefix}/restore") {
+        ControllerRequest::Action(ControllerAction::Restore)
     } else if method == "POST" && path == format!("{route_prefix}/open-app") {
         ControllerRequest::Action(ControllerAction::OpenApp)
     } else if method == "POST" && path == format!("{route_prefix}/disconnect") {
@@ -651,6 +675,10 @@ mod tests {
             ControllerRequest::Action(ControllerAction::Minimize)
         );
         assert_eq!(
+            controller_request_from_text("POST /private-token/restore HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::Restore)
+        );
+        assert_eq!(
             controller_request_from_text("POST /private-token/open-app HTTP/1.1\r\n", prefix),
             ControllerRequest::Action(ControllerAction::OpenApp)
         );
@@ -678,6 +706,9 @@ mod tests {
         assert!(qml.contains("IsActive"));
         assert!(qml.contains("IsMinimized"));
         assert!(qml.contains("sendCommand(\"minimize\")"));
+        assert!(qml.contains("sendCommand(\"restore\")"));
+        assert!(qml.contains("root.hide()"));
+        assert!(qml.contains("glyph: \"\\uf10d\""));
         assert!(qml.contains("sendCommand(\"open-app\")"));
         assert!(qml.contains("sendCommand(\"disconnect\")"));
     }

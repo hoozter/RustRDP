@@ -195,7 +195,7 @@ impl RustRdpApp {
                             | SessionState::Disconnecting
                     )
                 })
-                .map(|session| session.profile_name.clone())
+                .map(|session| (session.id, session.profile_name.clone()))
                 .collect();
             tray.update(&self.data.profiles, active);
         }
@@ -388,6 +388,11 @@ impl RustRdpApp {
                     show_main_window(ctx);
                 }
                 TrayAction::Connect(id) => self.request_connect(id),
+                TrayAction::ShowSession(id) => {
+                    if let Err(error) = self.sessions.show(id) {
+                        self.error(error.to_string());
+                    }
+                }
                 TrayAction::Quit => {
                     self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1735,6 +1740,7 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
     ui.separator();
     section_heading(ui, "Sessions", colors);
     let mut disconnect = None;
+    let mut show = None;
     let mut dismiss = None;
     let mut reconnect = None;
     for (id, name, pid, state) in snapshot {
@@ -1752,6 +1758,9 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
                 SessionState::Connecting | SessionState::Active => {
                     if ui.button("Disconnect").clicked() {
                         disconnect = Some(id);
+                    }
+                    if ui.button("Show remote").clicked() {
+                        show = Some(id);
                     }
                 }
                 SessionState::Exited(exit) => {
@@ -1798,6 +1807,9 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
     }
     if let Some(id) = disconnect {
         let _ = sessions.disconnect(id);
+    }
+    if let Some(id) = show {
+        let _ = sessions.show(id);
     }
     if let Some(id) = dismiss {
         sessions.dismiss_exited(id);
