@@ -5,8 +5,12 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cargo build --release --manifest-path "$project_dir/Cargo.toml"
 
 install -Dm755 "$project_dir/target/release/rustrdp" "$HOME/.local/bin/rustrdp"
-install -Dm644 "$project_dir/assets/rustrdp.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/rustrdp.svg"
-install -Dm644 "$project_dir/assets/rustrdp.png" "$HOME/.local/share/icons/hicolor/256x256/apps/rustrdp.png"
+install -Dm644 "$project_dir/assets/rustrdp.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/com.hoozter.RustRDP.svg"
+for size in 16 22 32 48 64; do
+    install -Dm644 "$project_dir/assets/rustrdp-$size.png" \
+        "$HOME/.local/share/icons/hicolor/${size}x${size}/apps/com.hoozter.RustRDP.png"
+done
+install -Dm644 "$project_dir/assets/rustrdp.png" "$HOME/.local/share/icons/hicolor/256x256/apps/com.hoozter.RustRDP.png"
 install -Dm644 "$project_dir/assets/rustrdp-full.svg" "$HOME/.local/share/rustrdp/rustrdp-full.svg"
 install -Dm644 "$project_dir/assets/session-controller.qml" "$HOME/.local/share/rustrdp/session-controller.qml"
 install -Dm644 "$project_dir/assets/MaterialSymbolsFilled.ttf" "$HOME/.local/share/rustrdp/MaterialSymbolsFilled.ttf"

@@ -42,20 +42,19 @@ impl ksni::Tray for RustRdpTray {
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        static ICON: LazyLock<ksni::Icon> = LazyLock::new(|| {
-            let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/rustrdp.png"))
-                .expect("the bundled RustRDP tray icon must be a valid PNG");
-            let mut data = icon.rgba;
-            for pixel in data.chunks_exact_mut(4) {
-                pixel.rotate_right(1);
-            }
-            ksni::Icon {
-                width: icon.width as i32,
-                height: icon.height as i32,
-                data,
-            }
+        static ICONS: LazyLock<Vec<ksni::Icon>> = LazyLock::new(|| {
+            [
+                include_bytes!("../assets/rustrdp-16.png").as_slice(),
+                include_bytes!("../assets/rustrdp-22.png").as_slice(),
+                include_bytes!("../assets/rustrdp-32.png").as_slice(),
+                include_bytes!("../assets/rustrdp-48.png").as_slice(),
+                include_bytes!("../assets/rustrdp-64.png").as_slice(),
+            ]
+            .into_iter()
+            .map(tray_icon_from_png)
+            .collect()
         });
-        vec![ICON.clone()]
+        ICONS.clone()
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
@@ -170,6 +169,20 @@ impl ksni::Tray for RustRdpTray {
             .into(),
         );
         menu
+    }
+}
+
+fn tray_icon_from_png(bytes: &[u8]) -> ksni::Icon {
+    let icon = eframe::icon_data::from_png_bytes(bytes)
+        .expect("the bundled RustRDP tray icon must be a valid PNG");
+    let mut data = icon.rgba;
+    for pixel in data.chunks_exact_mut(4) {
+        pixel.rotate_right(1);
+    }
+    ksni::Icon {
+        width: icon.width as i32,
+        height: icon.height as i32,
+        data,
     }
 }
 

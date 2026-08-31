@@ -41,7 +41,6 @@ pub struct RustRdpApp {
     minimize_on_first_frame: bool,
     colors: Colors,
     display_catalog: DisplayCatalog,
-    full_logo: egui::TextureHandle,
 }
 
 struct PasswordPrompt {
@@ -120,14 +119,7 @@ impl RustRdpApp {
             .or_default()
             .push("material-icons".to_owned());
         cc.egui_ctx.set_fonts(fonts);
-        let full_logo_icon =
-            eframe::icon_data::from_png_bytes(include_bytes!("../assets/rustrdp-full.png"))
-                .expect("the bundled RustRDP full logo must be a valid PNG");
-        let full_logo = cc.egui_ctx.load_texture(
-            "rustrdp-full-logo",
-            egui::ColorImage::from(&full_logo_icon),
-            egui::TextureOptions::LINEAR,
-        );
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let config_path = storage::default_config_path().ok();
         let (data, load_error) = match config_path.as_deref().map(storage::load) {
             Some(Ok(data)) => (data, None),
@@ -177,7 +169,6 @@ impl RustRdpApp {
             minimize_on_first_frame: start_minimized,
             colors,
             display_catalog: DisplayCatalog::detect(),
-            full_logo,
         }
     }
 
@@ -413,7 +404,11 @@ impl RustRdpApp {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.add(
-                        egui::Image::new(&self.full_logo).fit_to_exact_size(Vec2::new(154.0, 22.0)),
+                        egui::Image::from_bytes(
+                            "bytes://rustrdp-full.svg",
+                            include_bytes!("../assets/rustrdp-full.svg"),
+                        )
+                        .fit_to_exact_size(Vec2::new(154.0, 22.0)),
                     );
                     ui.add_space(12.0);
                     match &self.backend {

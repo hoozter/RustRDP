@@ -7,12 +7,14 @@ command -v rsvg-convert >/dev/null 2>&1 || {
     exit 1
 }
 
+for size in 16 22 32 48 64; do
+    rsvg-convert --width "$size" --height "$size" \
+        --output "$project_dir/assets/rustrdp-$size.png" \
+        "$project_dir/assets/rustrdp.svg"
+done
+
 rsvg-convert --width 256 --height 256 \
     --output "$project_dir/assets/rustrdp.png" \
     "$project_dir/assets/rustrdp.svg"
 
-rsvg-convert --width 308 --height 44 \
-    --output "$project_dir/assets/rustrdp-full.png" \
-    "$project_dir/assets/rustrdp-full.svg"
-
-printf '%s\n' "Rendered RustRDP icon and full logo PNG assets"
+printf '%s\n' "Rendered RustRDP desktop and tray icon sizes"

@@ -46,7 +46,7 @@ pub fn set_enabled(path: &Path, executable: &Path, enabled: bool) -> Result<(), 
         source,
     })?;
     let contents = format!(
-        "[Desktop Entry]\nType=Application\nName=RustRDP\nComment=FreeRDP connection manager\nExec={} --minimized\nIcon=rustrdp\nTerminal=false\nCategories=Network;RemoteAccess;\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=RustRDP\nComment=FreeRDP connection manager\nExec={} --minimized\nIcon=com.hoozter.RustRDP\nTerminal=false\nCategories=Network;RemoteAccess;\nX-GNOME-Autostart-enabled=true\n",
         desktop_exec_quote(executable)
     );
     let mut options = OpenOptions::new();
@@ -98,6 +98,7 @@ mod tests {
         set_enabled(&path, Path::new("/opt/Rust RDP/rustrdp"), true).unwrap();
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("Exec=\"/opt/Rust RDP/rustrdp\" --minimized"));
+        assert!(contents.contains("Icon=com.hoozter.RustRDP"));
         assert!(is_enabled(&path));
         set_enabled(&path, Path::new("ignored"), false).unwrap();
         assert!(!path.exists());

@@ -66,9 +66,9 @@ back in, or refresh the application launcher, if it does not appear immediately.
 
 `assets/rustrdp.svg` is the icon source used by the desktop launcher, tray,
 window, and taskbar. `assets/rustrdp-full.svg` is the full wordmark shown in the
-application header. Their generated PNG counterparts are embedded where egui
-or desktop metadata requires raster artwork. After changing either SVG,
-regenerate the PNGs and rebuild:
+application header, where it is rasterized at the actual display scale. The
+square icon's generated PNG is embedded where desktop metadata requires raster
+artwork. After changing the square SVG, regenerate its PNG and rebuild:
 
 For predictable rendering on every build machine, export wordmark lettering as
 vector curves/paths instead of leaving it as live SVG text.
