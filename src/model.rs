@@ -212,11 +212,15 @@ impl Display {
     }
 
     pub fn dynamic_resolution_available(&self) -> bool {
-        self.mode == DisplayMode::Windowed
+        matches!(self.mode, DisplayMode::Windowed | DisplayMode::Frameless)
     }
 
     pub fn constrain_to_supported_mode(&mut self, preferred_resolution: Resolution) -> bool {
-        if self.dynamic_resolution && !self.dynamic_resolution_available() {
+        if self.mode == DisplayMode::Frameless && !self.dynamic_resolution {
+            self.dynamic_resolution = true;
+            self.resolution = None;
+            true
+        } else if self.dynamic_resolution && !self.dynamic_resolution_available() {
             self.dynamic_resolution = false;
             self.resolution = Some(preferred_resolution);
             true
@@ -230,6 +234,7 @@ impl Display {
 #[serde(rename_all = "kebab-case")]
 pub enum DisplayMode {
     Windowed,
+    Frameless,
     #[default]
     BorderlessMaximized,
     Fullscreen,
@@ -328,6 +333,24 @@ mod tests {
             width: 1920,
             height: 1080,
         }));
+        assert!(display.dynamic_resolution);
+        assert_eq!(display.resolution, None);
+    }
+
+    #[test]
+    fn frameless_mode_enforces_live_remote_resizing() {
+        let preferred = Resolution {
+            width: 3840,
+            height: 2160,
+        };
+        let mut display = Display {
+            dynamic_resolution: false,
+            mode: DisplayMode::Frameless,
+            resolution: Some(preferred),
+            ..Display::default()
+        };
+
+        assert!(display.constrain_to_supported_mode(preferred));
         assert!(display.dynamic_resolution);
         assert_eq!(display.resolution, None);
     }

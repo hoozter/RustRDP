@@ -8,13 +8,15 @@ Window {
     id: root
 
     readonly property string controlUrl: Qt.application.arguments.length > 2
-        ? Qt.application.arguments[Qt.application.arguments.length - 2] : ""
+        ? Qt.application.arguments[Qt.application.arguments.length - 3] : ""
     readonly property string profileName: Qt.application.arguments.length > 1
-        ? Qt.application.arguments[Qt.application.arguments.length - 1] : "Remote desktop"
+        ? Qt.application.arguments[Qt.application.arguments.length - 2] : "Remote desktop"
+    readonly property bool canArrange: Qt.application.arguments.length > 0
+        && Qt.application.arguments[Qt.application.arguments.length - 1] === "arrange"
     readonly property int collapsedHeight: 7
     readonly property int expandedHeight: 52
     readonly property int collapsedWidth: 76
-    readonly property int expandedWidth: 420
+    readonly property int expandedWidth: canArrange ? 620 : 420
 
     property int remotePid: 0
     property bool remoteFound: false
@@ -28,6 +30,11 @@ Window {
     readonly property bool expanded: pinned || lingerExpanded || panelHover.hovered
     readonly property bool sessionVisible: !remoteWasFound
         || (remoteFound && remoteActive && !remoteMinimized && !minimizeRequested)
+
+    onExpandedChanged: {
+        root.width = root.expanded ? root.expandedWidth : root.collapsedWidth
+        root.height = root.expanded ? root.expandedHeight : root.collapsedHeight
+    }
 
     width: expanded ? expandedWidth : collapsedWidth
     height: expanded ? expandedHeight : collapsedHeight
@@ -72,7 +79,8 @@ Window {
             if (request.readyState !== XMLHttpRequest.DONE || request.status !== 200)
                 return
             try {
-                root.remotePid = Number(JSON.parse(request.responseText).pid || 0)
+                const state = JSON.parse(request.responseText)
+                root.remotePid = Number(state.pid || 0)
             } catch (error) {
                 root.remotePid = 0
             }
@@ -252,6 +260,63 @@ Window {
                     root.pinned = !root.pinned
                     root.lingerExpanded = root.pinned
                 }
+            }
+
+            PanelButton {
+                visible: root.canArrange
+                glyph: "\ue89f"
+                accessibleName: "Move remote window"
+                onTriggered: root.sendCommand("move")
+            }
+
+            Slider {
+                id: sizeSlider
+                visible: root.canArrange
+                Layout.preferredWidth: 120
+                from: 55
+                to: 100
+                stepSize: 5
+                value: 100
+                snapMode: Slider.SnapAlways
+                Accessible.name: "Remote window size"
+                Accessible.description: Math.round(value) + "% of the available desktop"
+
+                onPressedChanged: {
+                    if (!pressed)
+                        root.sendCommand("resize/" + Math.round(value))
+                }
+
+                background: Rectangle {
+                    x: sizeSlider.leftPadding
+                    y: sizeSlider.topPadding + sizeSlider.availableHeight / 2 - height / 2
+                    width: sizeSlider.availableWidth
+                    height: 4
+                    radius: 2
+                    color: "#4a5663"
+
+                    Rectangle {
+                        width: sizeSlider.visualPosition * parent.width
+                        height: parent.height
+                        radius: parent.radius
+                        color: "#4ea1f2"
+                    }
+                }
+
+                handle: Rectangle {
+                    x: sizeSlider.leftPadding + sizeSlider.visualPosition
+                       * (sizeSlider.availableWidth - width)
+                    y: sizeSlider.topPadding + sizeSlider.availableHeight / 2 - height / 2
+                    implicitWidth: 16
+                    implicitHeight: 16
+                    radius: 8
+                    color: sizeSlider.pressed ? "#dceeff" : "#f2f4f7"
+                    border.width: 2
+                    border.color: "#4ea1f2"
+                }
+
+                ToolTip.visible: hovered || pressed
+                ToolTip.text: "Remote window size — " + Math.round(value) + "%"
+                ToolTip.delay: 350
             }
 
             PanelButton {

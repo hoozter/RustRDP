@@ -1552,6 +1552,11 @@ fn profile_editor(
                             );
                             ui.selectable_value(
                                 &mut profile.display.mode,
+                                DisplayMode::Frameless,
+                                "Frameless — movable",
+                            );
+                            ui.selectable_value(
+                                &mut profile.display.mode,
                                 DisplayMode::BorderlessMaximized,
                                 "Desktop — borderless",
                             );
@@ -1572,7 +1577,14 @@ fn profile_editor(
                     );
                     ui.add_space(8.0);
                     field_label(ui, "Resolution", colors);
-                    if dynamic_available {
+                    if profile.display.mode == DisplayMode::Frameless {
+                        info_banner(
+                            ui,
+                            icons::DISPLAY,
+                            "The safety bar can move and resize this frameless window. Windows adjusts its desktop after each size change.",
+                            colors,
+                        );
+                    } else if dynamic_available {
                         ui.columns(2, |columns| {
                             if choice_card(
                                 &mut columns[0],
@@ -1608,6 +1620,9 @@ fn profile_editor(
                             DisplayMode::Fullscreen => {
                                 "Fullscreen uses a fixed remote desktop size fitted to this display."
                             }
+                            DisplayMode::Frameless => unreachable!(
+                                "frameless mode always uses live remote resizing"
+                            ),
                             DisplayMode::Windowed => {
                                 "Live resize is unavailable with this FreeRDP client. Choose a fixed remote desktop size below."
                             }
@@ -1703,7 +1718,9 @@ fn profile_editor(
                             "All keys go to the remote desktop. Use the safety bar or Right Shift + D to exit.",
                             colors,
                         );
-                    } else if profile.display.dynamic_resolution {
+                    } else if profile.display.dynamic_resolution
+                        && profile.display.mode == DisplayMode::Windowed
+                    {
                         info_banner(
                             ui,
                             icons::INFO,
@@ -2638,6 +2655,7 @@ fn greatest_common_divisor(mut left: u32, mut right: u32) -> u32 {
 fn display_mode_name(mode: DisplayMode) -> &'static str {
     match mode {
         DisplayMode::Windowed => "Windowed",
+        DisplayMode::Frameless => "Frameless — movable",
         DisplayMode::BorderlessMaximized => "Desktop — borderless",
         DisplayMode::Fullscreen => "Fullscreen with safety bar",
     }
@@ -2699,7 +2717,7 @@ mod tests {
     #[test]
     fn folder_share_name_uses_the_selected_directory_name() {
         assert_eq!(
-            folder_share_name(std::path::Path::new("/home/campbell/Documents")),
+            folder_share_name(std::path::Path::new("/home/alex/Documents")),
             "Documents"
         );
     }

@@ -123,7 +123,12 @@ impl FreeRdpBackend {
         if profile.display.dynamic_resolution && !self.capabilities.dynamic_resolution {
             return Err(BackendError::DynamicResolutionUnsupported);
         }
-        if profile.display.dynamic_resolution && profile.display.mode != DisplayMode::Windowed {
+        if profile.display.dynamic_resolution
+            && !matches!(
+                profile.display.mode,
+                DisplayMode::Windowed | DisplayMode::Frameless
+            )
+        {
             return Err(BackendError::DynamicResolutionModeUnsupported);
         }
         if !profile.display.dynamic_resolution
@@ -190,6 +195,10 @@ impl FreeRdpBackend {
         }
         match profile.display.mode {
             DisplayMode::Windowed => {}
+            DisplayMode::Frameless => {
+                arguments.push(OsString::from("-decorations"));
+                arguments.push(OsString::from("+workarea"));
+            }
             DisplayMode::BorderlessMaximized => {
                 arguments.push(OsString::from("-decorations"));
                 arguments.push(OsString::from("+workarea"));
@@ -433,6 +442,27 @@ mod tests {
             .map(|value| value.to_string_lossy().into_owned())
             .collect();
         assert!(args.contains(&"+dynamic-resolution".to_owned()));
+    }
+
+    #[test]
+    fn frameless_mode_fills_the_workarea_and_resizes_the_remote_desktop() {
+        let mut profile = Profile::default();
+        profile.display.mode = DisplayMode::Frameless;
+        profile.display.dynamic_resolution = true;
+
+        let command = capable_backend()
+            .build_connection(&profile, false, Some(100))
+            .unwrap();
+        let args: Vec<_> = command
+            .arguments
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.contains(&"-decorations".to_owned()));
+        assert!(args.contains(&"+workarea".to_owned()));
+        assert!(args.contains(&"+dynamic-resolution".to_owned()));
+        assert!(!args.contains(&"/smart-sizing".to_owned()));
     }
 
     #[test]

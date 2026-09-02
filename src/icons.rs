@@ -1,4 +1,4 @@
-// Material Symbols Filled codepoints. The bundled font is Apache-2.0 licensed
+// Material Symbols Outlined codepoints. The bundled font is Apache-2.0 licensed
 // and shared with Ottrin so both applications use the same visual language.
 pub const ADD: &str = "\u{E145}";
 pub const ADD_CIRCLE: &str = "\u{E147}";

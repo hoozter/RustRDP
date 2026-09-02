@@ -1,5 +1,8 @@
 # Project Brief: Modern Linux FreeRDP Frontend
 
+> Historical design brief. RustRDP now has an implemented product contract;
+> see `README.md` and the guides under `docs/` for current behavior.
+
 ## Project goal
 
 Build a lightweight, polished Linux RDP connection manager and frontend in Rust.

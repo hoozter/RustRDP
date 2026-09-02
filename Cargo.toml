@@ -1,9 +1,13 @@
 [package]
 name = "rustrdp"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
-license = "MIT"
+license-file = "LICENSE"
 description = "A polished Linux connection manager for FreeRDP"
+publish = false
+readme = "README.md"
+keywords = ["rdp", "freerdp", "remote-desktop", "wayland", "kde"]
+categories = ["gui", "network-programming"]
 
 [dependencies]
 crossbeam-channel = "0.5"

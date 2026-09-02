@@ -1,6 +1,6 @@
 use crate::desktop;
 use crate::freerdp::ConnectionCommand;
-use crate::model::Profile;
+use crate::model::{DisplayMode, Profile};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -14,6 +14,8 @@ use zeroize::Zeroize;
 
 const ACTIVE_AFTER: Duration = Duration::from_millis(750);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const CONTROLLER_READY_TIMEOUT: Duration = Duration::from_secs(8);
+const PROCESS_CLEANUP_GRACE: Duration = Duration::from_secs(2);
 const MAX_TECHNICAL_OUTPUT: usize = 64 * 1024;
 
 #[derive(Clone, Debug)]
@@ -61,7 +63,7 @@ pub enum SessionError {
     Spawn(io::Error),
     #[error("could not pass the password securely to FreeRDP: {0}")]
     CredentialHandoff(io::Error),
-    #[error("could not start the fullscreen safety bar: {0}")]
+    #[error("could not start the session safety bar: {0}")]
     Controller(io::Error),
     #[error("could not show the remote desktop window")]
     WindowControl,
@@ -126,7 +128,13 @@ impl SessionManager {
         show_controller: bool,
     ) -> Result<Uuid, SessionError> {
         let controller = if show_controller {
-            Some(ControllerServer::start(&profile.name).map_err(SessionError::Controller)?)
+            Some(
+                ControllerServer::start(
+                    &profile.name,
+                    profile.display.mode == DisplayMode::Frameless,
+                )
+                .map_err(SessionError::Controller)?,
+            )
         } else {
             None
         };
@@ -304,10 +312,10 @@ fn watch_process(
     let started = Instant::now();
     let mut announced_active = false;
     let mut requested_disconnect = false;
+    let mut force_kill_after = None;
     let status = loop {
         if controls.try_recv().is_ok() {
-            requested_disconnect = true;
-            let _ = child.kill();
+            request_process_stop(&mut child, &mut requested_disconnect, &mut force_kill_after);
         }
         if let Some(controller) = controller.as_mut() {
             match controller.poll() {
@@ -321,11 +329,24 @@ fn watch_process(
                 ControllerAction::OpenApp => {
                     desktop::set_app_tray_hidden(std::process::id(), false);
                 }
+                ControllerAction::Move => {
+                    desktop::begin_window_move(child.id());
+                }
+                ControllerAction::Resize(percent) => {
+                    desktop::set_window_work_area_percent(child.id(), percent);
+                }
                 ControllerAction::Disconnect => {
-                    requested_disconnect = true;
-                    let _ = child.kill();
+                    request_process_stop(
+                        &mut child,
+                        &mut requested_disconnect,
+                        &mut force_kill_after,
+                    );
                 }
             }
+        }
+        if force_kill_after.is_some_and(|deadline| Instant::now() >= deadline) {
+            let _ = child.kill();
+            force_kill_after = None;
         }
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -347,6 +368,27 @@ fn watch_process(
     let _ = events.send(Event::Exited(id, exit));
 }
 
+fn request_process_stop(
+    child: &mut Child,
+    requested_disconnect: &mut bool,
+    force_kill_after: &mut Option<Instant>,
+) {
+    if *requested_disconnect {
+        return;
+    }
+    *requested_disconnect = true;
+    let terminated = Command::new("kill")
+        .arg("-TERM")
+        .arg(child.id().to_string())
+        .status()
+        .is_ok_and(|status| status.success());
+    if terminated {
+        *force_kill_after = Some(Instant::now() + PROCESS_CLEANUP_GRACE);
+    } else {
+        let _ = child.kill();
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ControllerAction {
     None,
@@ -354,6 +396,8 @@ enum ControllerAction {
     Minimize,
     Restore,
     OpenApp,
+    Move,
+    Resize(u8),
     Disconnect,
 }
 
@@ -368,10 +412,11 @@ struct ControllerServer {
     process: Child,
     route_prefix: String,
     remote_pid: Option<u32>,
+    can_arrange: bool,
 }
 
 impl ControllerServer {
-    fn start(profile_name: &str) -> io::Result<Self> {
+    fn start(profile_name: &str, can_arrange: bool) -> io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let token = Uuid::new_v4().simple().to_string();
@@ -388,6 +433,7 @@ impl ControllerServer {
             .arg("--")
             .arg(control_url)
             .arg(profile_name)
+            .arg(if can_arrange { "arrange" } else { "fixed" })
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -397,6 +443,7 @@ impl ControllerServer {
             process,
             route_prefix,
             remote_pid: None,
+            can_arrange,
         };
         controller.wait_until_ready()?;
         Ok(controller)
@@ -416,13 +463,19 @@ impl ControllerServer {
             }
             ControllerRequest::Action(action) => {
                 write_no_content(&mut stream);
-                action
+                if !self.can_arrange
+                    && matches!(action, ControllerAction::Move | ControllerAction::Resize(_))
+                {
+                    ControllerAction::None
+                } else {
+                    action
+                }
             }
         }
     }
 
     fn wait_until_ready(&mut self) -> io::Result<()> {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + CONTROLLER_READY_TIMEOUT;
         while Instant::now() < deadline {
             if let Some(status) = self.process.try_wait()? {
                 return Err(io::Error::other(format!(
@@ -482,6 +535,16 @@ fn controller_request_from_text(request: &str, route_prefix: &str) -> Controller
         ControllerRequest::Action(ControllerAction::Restore)
     } else if method == "POST" && path == format!("{route_prefix}/open-app") {
         ControllerRequest::Action(ControllerAction::OpenApp)
+    } else if method == "POST" && path == format!("{route_prefix}/move") {
+        ControllerRequest::Action(ControllerAction::Move)
+    } else if method == "POST" && path.starts_with(&format!("{route_prefix}/resize/")) {
+        path.strip_prefix(&format!("{route_prefix}/resize/"))
+            .and_then(|percent| percent.parse::<u8>().ok())
+            .filter(|percent| (55..=100).contains(percent) && percent % 5 == 0)
+            .map_or(
+                ControllerRequest::Action(ControllerAction::None),
+                |percent| ControllerRequest::Action(ControllerAction::Resize(percent)),
+            )
     } else if method == "POST" && path == format!("{route_prefix}/disconnect") {
         ControllerRequest::Action(ControllerAction::Disconnect)
     } else {
@@ -495,8 +558,12 @@ fn write_no_content(stream: &mut TcpStream) {
     );
 }
 
+fn controller_state_body(remote_pid: Option<u32>) -> String {
+    format!("{{\"pid\":{}}}", remote_pid.unwrap_or(0))
+}
+
 fn write_controller_state(stream: &mut TcpStream, remote_pid: Option<u32>) {
-    let body = format!("{{\"pid\":{}}}", remote_pid.unwrap_or(0));
+    let body = controller_state_body(remote_pid);
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
         body.len(),
@@ -683,6 +750,14 @@ mod tests {
             ControllerRequest::Action(ControllerAction::OpenApp)
         );
         assert_eq!(
+            controller_request_from_text("POST /private-token/move HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::Move)
+        );
+        assert_eq!(
+            controller_request_from_text("POST /private-token/resize/75 HTTP/1.1\r\n", prefix),
+            ControllerRequest::Action(ControllerAction::Resize(75))
+        );
+        assert_eq!(
             controller_request_from_text("POST /private-token/disconnect HTTP/1.1\r\n", prefix),
             ControllerRequest::Action(ControllerAction::Disconnect)
         );
@@ -694,6 +769,21 @@ mod tests {
             controller_request_from_text("POST /wrong/disconnect HTTP/1.1\r\n", prefix),
             ControllerRequest::Action(ControllerAction::None)
         );
+        for invalid in ["54", "77", "101", "large"] {
+            assert_eq!(
+                controller_request_from_text(
+                    &format!("POST /private-token/resize/{invalid} HTTP/1.1\r\n"),
+                    prefix,
+                ),
+                ControllerRequest::Action(ControllerAction::None)
+            );
+        }
+    }
+
+    #[test]
+    fn controller_state_exposes_only_the_remote_process() {
+        assert_eq!(controller_state_body(Some(1234)), "{\"pid\":1234}");
+        assert_eq!(controller_state_body(None), "{\"pid\":0}");
     }
 
     #[test]
@@ -710,6 +800,10 @@ mod tests {
         assert!(qml.contains("root.hide()"));
         assert!(qml.contains("glyph: \"\\uf10d\""));
         assert!(qml.contains("sendCommand(\"open-app\")"));
+        assert!(qml.contains("canArrange"));
+        assert!(qml.contains("sendCommand(\"move\")"));
+        assert!(qml.contains("sendCommand(\"resize/"));
+        assert!(qml.contains("Slider"));
         assert!(qml.contains("sendCommand(\"disconnect\")"));
     }
 
@@ -764,6 +858,35 @@ mod tests {
         drop(manager);
 
         assert!(!PathBuf::from(format!("/proc/{pid}")).exists());
+    }
+
+    #[test]
+    fn disconnect_allows_the_child_to_clean_up_before_forcing_exit() {
+        let temporary = tempfile::tempdir().unwrap();
+        let marker = temporary.path().join("terminated-cleanly");
+        let profile = Profile::default();
+        let command = ConnectionCommand {
+            program: PathBuf::from("/bin/sh"),
+            arguments: vec![
+                OsString::from("-c"),
+                OsString::from(
+                    "trap 'printf done > \"$1\"; exit 0' TERM; while :; do sleep 1; done",
+                ),
+                OsString::from("rustrdp-cleanup-test"),
+                marker.as_os_str().to_owned(),
+            ],
+            password_via_stdin: false,
+        };
+        let mut manager = SessionManager::default();
+        let id = manager
+            .launch(&profile, command, None, false, false)
+            .unwrap();
+        thread::sleep(Duration::from_millis(50));
+
+        manager.disconnect(id).unwrap();
+        drop(manager);
+
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "done");
     }
 
     #[test]
