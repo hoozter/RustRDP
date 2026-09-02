@@ -67,6 +67,34 @@ pub fn choose_import_path() -> Result<Option<PathBuf>, FileDialogError> {
     ])
 }
 
+pub fn choose_folder(initial: Option<&Path>) -> Result<Option<PathBuf>, FileDialogError> {
+    let initial = initial
+        .filter(|path| path.is_dir())
+        .map(Path::to_owned)
+        .or_else(|| UserDirs::new().map(|dirs| dirs.home_dir().to_owned()))
+        .unwrap_or_else(std::env::temp_dir);
+    run_first_available([
+        (
+            "kdialog",
+            vec![
+                "--title".into(),
+                "Choose a local folder to share".into(),
+                "--getexistingdirectory".into(),
+                initial.as_os_str().to_owned(),
+            ],
+        ),
+        (
+            "zenity",
+            vec![
+                "--file-selection".into(),
+                "--directory".into(),
+                "--title=Choose a local folder to share".into(),
+                format!("--filename={}/", initial.display()).into(),
+            ],
+        ),
+    ])
+}
+
 fn suggested_archive_path() -> PathBuf {
     UserDirs::new()
         .and_then(|dirs| {

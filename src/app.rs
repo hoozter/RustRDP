@@ -35,6 +35,7 @@ pub struct RustRdpApp {
     password_prompt: Option<PasswordPrompt>,
     delete_prompt: Option<DeletePrompt>,
     status: Option<StatusMessage>,
+    folder_picker_error: Option<String>,
     tray: Option<TrayIntegration>,
     tray_actions: Receiver<TrayAction>,
     quitting: bool,
@@ -163,6 +164,7 @@ impl RustRdpApp {
                 text,
                 is_error: true,
             }),
+            folder_picker_error: None,
             tray,
             tray_actions,
             quitting: false,
@@ -224,6 +226,7 @@ impl RustRdpApp {
         self.main_view = MainView::Connections;
         self.selected = None;
         self.draft = Some(Profile::default());
+        self.folder_picker_error = None;
         self.editor_section = EditorSection::Connection;
     }
 
@@ -236,6 +239,7 @@ impl RustRdpApp {
             .iter()
             .find(|profile| profile.id == profile_id)
             .cloned();
+        self.folder_picker_error = None;
         self.editor_section = EditorSection::Connection;
     }
 
@@ -587,6 +591,7 @@ impl RustRdpApp {
                 &mut self.editor_section,
                 self.colors,
                 &self.display_catalog,
+                &mut self.folder_picker_error,
             );
         } else if let Some(profile) = self.selected_profile() {
             summary_action = profile_summary(root, profile, self.colors, &self.display_catalog);
@@ -608,6 +613,7 @@ impl RustRdpApp {
             }
             EditorAction::Cancel => {
                 self.draft = None;
+                self.folder_picker_error = None;
                 if self.selected.is_none() {
                     self.selected = self.data.profiles.first().map(|profile| profile.id);
                 }
@@ -1392,6 +1398,7 @@ fn profile_editor(
     section: &mut EditorSection,
     colors: Colors,
     displays: &DisplayCatalog,
+    folder_picker_error: &mut Option<String>,
 ) -> EditorAction {
     let mut action = EditorAction::None;
     ui.horizontal(|ui| {
@@ -1735,10 +1742,15 @@ fn profile_editor(
                             });
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if toolbar_button(ui, icons::ADD, "Add folder", colors).clicked() {
-                                    profile.resources.drives.push(Drive {
-                                        name: "share".to_owned(),
-                                        path: PathBuf::new(),
-                                    });
+                                    match file_dialog::choose_folder(None) {
+                                        Ok(Some(path)) => {
+                                            let name = folder_share_name(&path);
+                                            profile.resources.drives.push(Drive { name, path });
+                                            *folder_picker_error = None;
+                                        }
+                                        Ok(None) => {}
+                                        Err(error) => *folder_picker_error = Some(error.to_string()),
+                                    }
                                 }
                             });
                         });
@@ -1758,13 +1770,26 @@ fn profile_editor(
                                     egui::TextEdit::singleline(&mut path)
                                         .hint_text("/home/me/Documents")
                                         .margin(egui::Margin::symmetric(8, 5))
-                                        .desired_width(ui.available_width() - 48.0),
+                                        .desired_width((ui.available_width() - 145.0).max(160.0)),
                                 )
                                 .changed()
                             {
-                                drive.path = PathBuf::from(path);
-                            }
-                            if icon_button(ui, icons::DELETE, colors).clicked() {
+                                    drive.path = PathBuf::from(path);
+                                }
+                                if toolbar_button(ui, icons::FOLDER_OPEN, "Browse", colors).clicked() {
+                                    match file_dialog::choose_folder(Some(&drive.path)) {
+                                        Ok(Some(path)) => {
+                                            if drive.name.trim().is_empty() || drive.name == "share" {
+                                                drive.name = folder_share_name(&path);
+                                            }
+                                            drive.path = path;
+                                            *folder_picker_error = None;
+                                        }
+                                        Ok(None) => {}
+                                        Err(error) => *folder_picker_error = Some(error.to_string()),
+                                    }
+                                }
+                                if icon_button(ui, icons::DELETE, colors).clicked() {
                                 remove = Some(index);
                             }
                         });
@@ -1775,6 +1800,10 @@ fn profile_editor(
                                 RichText::new("No local folders shared yet.")
                                     .color(colors.muted),
                             );
+                        }
+                        if let Some(error) = folder_picker_error.as_deref() {
+                            ui.add_space(5.0);
+                            ui.colored_label(colors.error, error);
                         }
                         if let Some(index) = remove {
                             profile.resources.drives.remove(index);
@@ -2531,6 +2560,14 @@ fn resolution_label(resolution: Resolution, current: Option<Resolution>) -> Stri
     )
 }
 
+fn folder_share_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("share")
+        .to_owned()
+}
+
 fn aspect_ratio_label(resolution: Resolution) -> String {
     const COMMON: &[(u32, u32)] = &[(4, 3), (5, 4), (3, 2), (16, 10), (16, 9), (21, 9), (32, 9)];
     let actual = resolution.width as f64 / resolution.height as f64;
@@ -2615,6 +2652,14 @@ mod tests {
                 Some(current)
             ),
             "1920 × 1200 · 16:10"
+        );
+    }
+
+    #[test]
+    fn folder_share_name_uses_the_selected_directory_name() {
+        assert_eq!(
+            folder_share_name(std::path::Path::new("/home/campbell/Documents")),
+            "Documents"
         );
     }
 }
