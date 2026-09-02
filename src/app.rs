@@ -355,13 +355,23 @@ impl RustRdpApp {
                 return;
             }
         };
-        let command = match backend.build_connection(&profile, password.is_some()) {
-            Ok(command) => command,
-            Err(error) => {
-                self.error(error.to_string());
-                return;
+        let local_scale_percent = if profile.display.match_local_scale {
+            let detected = DisplayCatalog::detect().scale_percent;
+            if detected.is_some() {
+                self.display_catalog.scale_percent = detected;
             }
+            detected.or(self.display_catalog.scale_percent)
+        } else {
+            self.display_catalog.scale_percent
         };
+        let command =
+            match backend.build_connection(&profile, password.is_some(), local_scale_percent) {
+                Ok(command) => command,
+                Err(error) => {
+                    self.error(error.to_string());
+                    return;
+                }
+            };
         tracing::info!(
             profile = %profile.name,
             command = %command.display_redacted(),
@@ -579,7 +589,7 @@ impl RustRdpApp {
                 &self.display_catalog,
             );
         } else if let Some(profile) = self.selected_profile() {
-            summary_action = profile_summary(root, profile, self.colors);
+            summary_action = profile_summary(root, profile, self.colors, &self.display_catalog);
         } else {
             empty_state(root, self.colors);
         }
@@ -1067,7 +1077,12 @@ enum SummaryAction {
     ToggleFavorite(Uuid),
 }
 
-fn profile_summary(ui: &mut egui::Ui, profile: &Profile, colors: Colors) -> SummaryAction {
+fn profile_summary(
+    ui: &mut egui::Ui,
+    profile: &Profile,
+    colors: Colors,
+    displays: &DisplayCatalog,
+) -> SummaryAction {
     let mut action = SummaryAction::None;
     ui.horizontal(|ui| {
         ui.label(
@@ -1154,6 +1169,15 @@ fn profile_summary(ui: &mut egui::Ui, profile: &Profile, colors: Colors) -> Summ
                     "Fixed".to_owned()
                 };
                 detail_row(ui, "Resolution", &resolution, colors);
+                let scale = if profile.display.match_local_scale {
+                    displays.scale_percent.map_or_else(
+                        || "Match current display".to_owned(),
+                        |percent| format!("Current display — {percent}%"),
+                    )
+                } else {
+                    format!("{}%", profile.display.scale_percent)
+                };
+                detail_row(ui, "Scaling", &scale, colors);
                 if profile.display.mode == DisplayMode::Fullscreen {
                     ui.add_space(8.0);
                     info_banner(
@@ -1588,6 +1612,46 @@ fn profile_editor(
                             );
                         }
                     }
+                    ui.add_space(8.0);
+                    field_label(ui, "Remote scaling", colors);
+                    let scale_description = displays.scale_percent.map_or_else(
+                        || "Use the desktop environment's current scale when connecting."
+                            .to_owned(),
+                        |percent| {
+                            let display = displays.name.as_deref().unwrap_or("this display");
+                            format!("Use {display}'s current {percent}% scale when connecting.")
+                        },
+                    );
+                    setting_toggle_row(
+                        ui,
+                        icons::DISPLAY,
+                        "Match current display",
+                        &scale_description,
+                        &mut profile.display.match_local_scale,
+                        colors,
+                    );
+                    if !profile.display.match_local_scale {
+                        ui.add_space(5.0);
+                        egui::ComboBox::from_id_salt("profile-display-scale")
+                            .selected_text(format!("{}%", profile.display.scale_percent))
+                            .width(ui.available_width())
+                            .show_ui(ui, |ui| {
+                                for percent in [100_u16, 125, 150, 175, 200, 225, 250, 300] {
+                                    ui.selectable_value(
+                                        &mut profile.display.scale_percent,
+                                        percent,
+                                        format!("{percent}%"),
+                                    );
+                                }
+                            });
+                    }
+                    ui.label(
+                        RichText::new(
+                            "Changes Windows text and app sizing without lowering the selected resolution.",
+                        )
+                        .small()
+                        .color(colors.muted),
+                    );
                     ui.add_space(7.0);
                     if profile.display.mode == DisplayMode::Fullscreen {
                         info_banner(
@@ -2459,7 +2523,38 @@ fn resolution_label(resolution: Resolution, current: Option<Resolution>) -> Stri
     } else {
         ""
     };
-    format!("{} × {}{suffix}", resolution.width, resolution.height)
+    format!(
+        "{} × {} · {}{suffix}",
+        resolution.width,
+        resolution.height,
+        aspect_ratio_label(resolution)
+    )
+}
+
+fn aspect_ratio_label(resolution: Resolution) -> String {
+    const COMMON: &[(u32, u32)] = &[(4, 3), (5, 4), (3, 2), (16, 10), (16, 9), (21, 9), (32, 9)];
+    let actual = resolution.width as f64 / resolution.height as f64;
+    if let Some(&(width, height)) = COMMON.iter().min_by(|left, right| {
+        let left_delta = (actual - left.0 as f64 / left.1 as f64).abs();
+        let right_delta = (actual - right.0 as f64 / right.1 as f64).abs();
+        left_delta.total_cmp(&right_delta)
+    }) && (actual - width as f64 / height as f64).abs() / actual < 0.03
+    {
+        return format!("{width}:{height}");
+    }
+    let divisor = greatest_common_divisor(resolution.width, resolution.height);
+    format!(
+        "{}:{}",
+        resolution.width / divisor,
+        resolution.height / divisor
+    )
+}
+
+fn greatest_common_divisor(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        (left, right) = (right, left % right);
+    }
+    left.max(1)
 }
 
 fn display_mode_name(mode: DisplayMode) -> &'static str {
@@ -2494,5 +2589,32 @@ fn hide_main_window(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     if !desktop::set_app_tray_hidden(std::process::id(), true) {
         tracing::debug!("KWin tray hiding was unavailable; used native minimization");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolution_labels_include_friendly_aspect_ratios_and_current_state() {
+        let current = Resolution {
+            width: 3840,
+            height: 2160,
+        };
+        assert_eq!(
+            resolution_label(current, Some(current)),
+            "3840 × 2160 · 16:9 — current"
+        );
+        assert_eq!(
+            resolution_label(
+                Resolution {
+                    width: 1920,
+                    height: 1200,
+                },
+                Some(current)
+            ),
+            "1920 × 1200 · 16:10"
+        );
     }
 }

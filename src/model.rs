@@ -114,6 +114,9 @@ impl Profile {
         {
             return Err(ProfileError::InvalidResolution);
         }
+        if !(100..=500).contains(&self.display.scale_percent) {
+            return Err(ProfileError::InvalidScale);
+        }
         Ok(())
     }
 }
@@ -182,6 +185,8 @@ pub struct Display {
     pub dynamic_resolution: bool,
     pub mode: DisplayMode,
     pub resolution: Option<Resolution>,
+    pub match_local_scale: bool,
+    pub scale_percent: u16,
 }
 
 impl Default for Display {
@@ -190,7 +195,20 @@ impl Default for Display {
             dynamic_resolution: true,
             mode: DisplayMode::BorderlessMaximized,
             resolution: None,
+            match_local_scale: false,
+            scale_percent: 100,
         }
+    }
+}
+
+impl Display {
+    pub fn effective_scale_percent(&self, local_scale_percent: Option<u16>) -> u16 {
+        let percent = if self.match_local_scale {
+            local_scale_percent.unwrap_or(100)
+        } else {
+            self.scale_percent
+        };
+        percent.clamp(100, 500)
     }
 }
 
@@ -247,6 +265,8 @@ pub enum ProfileError {
     InvalidPort,
     #[error("The explicit resolution is too small")]
     InvalidResolution,
+    #[error("Remote scaling must be between 100% and 500%")]
+    InvalidScale,
 }
 
 #[cfg(test)]
@@ -258,6 +278,7 @@ mod tests {
         let profile = Profile::default();
         assert!(profile.display.dynamic_resolution);
         assert_eq!(profile.display.mode, DisplayMode::BorderlessMaximized);
+        assert_eq!(profile.display.effective_scale_percent(None), 100);
         assert!(profile.resources.clipboard);
         assert!(profile.resources.audio);
         assert!(profile.resources.printers);

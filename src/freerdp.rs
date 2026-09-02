@@ -14,6 +14,8 @@ pub struct FreeRdpBackend {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
     pub dynamic_resolution: bool,
+    pub smart_sizing: bool,
+    pub display_scaling: bool,
     pub credential_stdin: bool,
     pub clipboard: bool,
     pub printers: bool,
@@ -50,6 +52,10 @@ pub enum BackendError {
     UnsafeCredentialHandoff,
     #[error("the selected FreeRDP client does not support dynamic resolution")]
     DynamicResolutionUnsupported,
+    #[error("the selected FreeRDP client does not support fixed-resolution scaling")]
+    SmartSizingUnsupported,
+    #[error("the selected FreeRDP client does not support remote display scaling")]
+    DisplayScalingUnsupported,
     #[error("the selected FreeRDP client does not support {0} redirection")]
     RedirectionUnsupported(&'static str),
 }
@@ -91,6 +97,8 @@ impl FreeRdpBackend {
             version,
             capabilities: Capabilities {
                 dynamic_resolution: has("dynamic-resolution"),
+                smart_sizing: has("smart-sizing"),
+                display_scaling: has("scale-desktop") && has("scale-device"),
                 credential_stdin: has("from-stdin"),
                 clipboard: has("clipboard"),
                 printers: has("/printer"),
@@ -105,12 +113,23 @@ impl FreeRdpBackend {
         &self,
         profile: &Profile,
         has_password: bool,
+        local_scale_percent: Option<u16>,
     ) -> Result<ConnectionCommand, BackendError> {
         if has_password && !self.capabilities.credential_stdin {
             return Err(BackendError::UnsafeCredentialHandoff);
         }
         if profile.display.dynamic_resolution && !self.capabilities.dynamic_resolution {
             return Err(BackendError::DynamicResolutionUnsupported);
+        }
+        if !profile.display.dynamic_resolution
+            && profile.display.resolution.is_some()
+            && !self.capabilities.smart_sizing
+        {
+            return Err(BackendError::SmartSizingUnsupported);
+        }
+        let scale_percent = profile.display.effective_scale_percent(local_scale_percent);
+        if scale_percent != 100 && !self.capabilities.display_scaling {
+            return Err(BackendError::DisplayScalingUnsupported);
         }
         for (enabled, supported, name) in [
             (
@@ -179,6 +198,17 @@ impl FreeRdpBackend {
                 "/size:{}x{}",
                 resolution.width, resolution.height
             )));
+            // SDL otherwise replaces DesktopWidth/DesktopHeight with the local
+            // monitor dimensions during startup, making every fixed preset
+            // produce the same remote resolution.
+            arguments.push(OsString::from("/smart-sizing"));
+        }
+        if scale_percent != 100 {
+            arguments.push(OsString::from(format!("/scale-desktop:{scale_percent}")));
+            arguments.push(OsString::from(format!(
+                "/scale-device:{}",
+                device_scale_percent(scale_percent)
+            )));
         }
         arguments.push(OsString::from(format!("/t:{}", profile.name)));
         arguments.push(if profile.resources.clipboard {
@@ -205,6 +235,13 @@ impl FreeRdpBackend {
             password_via_stdin: has_password,
         })
     }
+}
+
+fn device_scale_percent(desktop_scale_percent: u16) -> u16 {
+    [100_u16, 140, 180]
+        .into_iter()
+        .min_by_key(|candidate| candidate.abs_diff(desktop_scale_percent))
+        .unwrap_or(100)
 }
 
 fn connection_target(host: &str, port: u16) -> String {
@@ -267,6 +304,8 @@ mod tests {
             version: "3.30.0".to_owned(),
             capabilities: Capabilities {
                 dynamic_resolution: true,
+                smart_sizing: true,
+                display_scaling: true,
                 credential_stdin: true,
                 clipboard: true,
                 printers: true,
@@ -299,7 +338,9 @@ mod tests {
             path: PathBuf::from("/home/david/Documents"),
         });
 
-        let command = capable_backend().build_connection(&profile, true).unwrap();
+        let command = capable_backend()
+            .build_connection(&profile, true, None)
+            .unwrap();
         let args: Vec<_> = command
             .arguments
             .iter()
@@ -312,6 +353,7 @@ mod tests {
         assert!(!args.contains(&"-grab-keyboard".to_owned()));
         assert!(!args.iter().any(|arg| arg.starts_with("/floatbar")));
         assert!(args.contains(&"/size:1920x1080".to_owned()));
+        assert!(args.contains(&"/smart-sizing".to_owned()));
         assert!(args.contains(&"/microphone".to_owned()));
         assert!(args.contains(&"/drive:My_files,/home/david/Documents".to_owned()));
         assert!(!command.display_redacted().contains("password"));
@@ -321,7 +363,9 @@ mod tests {
     fn borderless_mode_fills_the_workarea_without_exclusive_fullscreen() {
         let mut profile = Profile::default();
         profile.display.mode = DisplayMode::BorderlessMaximized;
-        let command = capable_backend().build_connection(&profile, false).unwrap();
+        let command = capable_backend()
+            .build_connection(&profile, false, None)
+            .unwrap();
         let args: Vec<_> = command
             .arguments
             .iter()
@@ -341,7 +385,9 @@ mod tests {
             width: 1920,
             height: 1080,
         });
-        let command = capable_backend().build_connection(&profile, false).unwrap();
+        let command = capable_backend()
+            .build_connection(&profile, false, None)
+            .unwrap();
         let args: Vec<_> = command
             .arguments
             .iter()
@@ -350,6 +396,36 @@ mod tests {
 
         assert!(args.contains(&"+dynamic-resolution".to_owned()));
         assert!(!args.iter().any(|argument| argument.starts_with("/size:")));
+    }
+
+    #[test]
+    fn local_fractional_scale_maps_to_exact_desktop_and_nearest_device_scale() {
+        let mut profile = Profile::default();
+        profile.display.match_local_scale = true;
+        let command = capable_backend()
+            .build_connection(&profile, false, Some(175))
+            .unwrap();
+        let args: Vec<_> = command
+            .arguments
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.contains(&"/scale-desktop:175".to_owned()));
+        assert!(args.contains(&"/scale-device:180".to_owned()));
+    }
+
+    #[test]
+    fn one_hundred_percent_scale_keeps_freerdp_defaults() {
+        let command = capable_backend()
+            .build_connection(&Profile::default(), false, Some(175))
+            .unwrap();
+        assert!(
+            !command
+                .arguments
+                .iter()
+                .any(|argument| argument.to_string_lossy().starts_with("/scale-"))
+        );
     }
 
     #[test]
@@ -370,7 +446,7 @@ mod tests {
         let mut backend = capable_backend();
         backend.capabilities.credential_stdin = false;
         assert!(matches!(
-            backend.build_connection(&Profile::default(), true),
+            backend.build_connection(&Profile::default(), true, None),
             Err(BackendError::UnsafeCredentialHandoff)
         ));
     }
@@ -380,7 +456,7 @@ mod tests {
         let mut backend = capable_backend();
         backend.capabilities.printers = false;
         assert!(matches!(
-            backend.build_connection(&Profile::default(), false),
+            backend.build_connection(&Profile::default(), false, None),
             Err(BackendError::RedirectionUnsupported("printer"))
         ));
     }

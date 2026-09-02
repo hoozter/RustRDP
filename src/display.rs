@@ -6,6 +6,7 @@ use std::process::Command;
 pub struct DisplayCatalog {
     pub name: Option<String>,
     pub current: Option<Resolution>,
+    pub scale_percent: Option<u16>,
     pub modes: Vec<Resolution>,
 }
 
@@ -51,6 +52,14 @@ fn parse_kscreen_output(raw: &str) -> DisplayCatalog {
         .lines()
         .find_map(|line| line.trim().strip_prefix("Modes:"))
         .unwrap_or_default();
+    let scale_percent = block.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("Scale:")?
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .map(|scale| (scale * 100.0).round() as u16)
+    });
     let mut current = None;
     let mut unique = BTreeSet::new();
     for token in modes_line.split_whitespace() {
@@ -88,6 +97,7 @@ fn parse_kscreen_output(raw: &str) -> DisplayCatalog {
     DisplayCatalog {
         name,
         current,
+        scale_percent,
         modes,
     }
 }
@@ -119,6 +129,7 @@ mod tests {
         let output = "\x1b[32mOutput: \x1b[0m1 eDP-1 uuid\n\tenabled\n\tconnected\n\tpriority 1\n\tModes: 1:3840x2160@60.00! 2:\x1b[32m2880x1800@90.00*\x1b[0m 3:2560x1600@60.00 4:1920x1080@60.00\n\tScale: 1.85\n";
         let catalog = parse_kscreen_output(output);
         assert_eq!(catalog.name.as_deref(), Some("eDP-1"));
+        assert_eq!(catalog.scale_percent, Some(185));
         assert_eq!(
             catalog.current,
             Some(Resolution {

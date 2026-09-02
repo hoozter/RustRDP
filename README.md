@@ -15,7 +15,9 @@ scaling on Wayland.
 - Cohesive native Wayland workspace with saved-connection navigation, semantic
   icons, accessible controls, and system, light, and dark themes.
 - Direct integration with FreeRDP's current SDL3 client, `sdl-freerdp`.
-- Dynamic resolution or fixed presets discovered from the active KDE display,
+- Dynamic resolution or working fixed presets discovered from the active KDE display,
+  with aspect-ratio labels and optional 100–500% remote scaling (including
+  matching the current fractional KDE display scale),
   including its current native mode, plus windowed, borderless-desktop, and
   safe fullscreen modes. A Wayland layer-shell safety bar remains above the
   remote desktop while FreeRDP keeps keyboard input captured for the remote
