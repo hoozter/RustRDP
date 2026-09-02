@@ -192,8 +192,8 @@ pub struct Display {
 impl Default for Display {
     fn default() -> Self {
         Self {
-            dynamic_resolution: false,
-            mode: DisplayMode::BorderlessMaximized,
+            dynamic_resolution: true,
+            mode: DisplayMode::Windowed,
             resolution: None,
             match_local_scale: false,
             scale_percent: 100,
@@ -290,8 +290,8 @@ mod tests {
     #[test]
     fn defaults_are_crisp_and_convenient() {
         let profile = Profile::default();
-        assert!(!profile.display.dynamic_resolution);
-        assert_eq!(profile.display.mode, DisplayMode::BorderlessMaximized);
+        assert!(profile.display.dynamic_resolution);
+        assert_eq!(profile.display.mode, DisplayMode::Windowed);
         assert_eq!(profile.display.effective_scale_percent(None), 100);
         assert!(profile.resources.clipboard);
         assert!(profile.resources.audio);
@@ -307,6 +307,7 @@ mod tests {
         };
         let mut borderless = Display {
             dynamic_resolution: true,
+            mode: DisplayMode::BorderlessMaximized,
             ..Display::default()
         };
         assert!(borderless.constrain_to_supported_mode(preferred));

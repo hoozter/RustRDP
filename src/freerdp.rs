@@ -368,6 +368,7 @@ mod tests {
     fn borderless_mode_fills_the_workarea_without_exclusive_fullscreen() {
         let mut profile = Profile::default();
         profile.display.mode = DisplayMode::BorderlessMaximized;
+        profile.display.dynamic_resolution = false;
         let command = capable_backend()
             .build_connection(&profile, false, None)
             .unwrap();
