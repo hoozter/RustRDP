@@ -19,9 +19,9 @@ scaling on Wayland.
   labels and optional 100–500% remote scaling (including matching the current
   fractional KDE display scale), plus windowed, borderless-desktop, and safe
   fullscreen modes. Live remote resizing is offered only for a resizable
-  window on displays without fractional Wayland scaling; other combinations
-  use a fixed remote size fitted locally so the controls describe what the SDL
-  client can reliably deliver. A Wayland layer-shell safety bar remains above
+  window; borderless and fullscreen modes use a fixed remote size fitted
+  locally so the controls describe what the SDL client can reliably deliver.
+  A Wayland layer-shell safety bar remains above
   the remote desktop while FreeRDP keeps keyboard input captured for the remote
   system. FreeRDP's `Right Shift + D` disconnect shortcut remains available as
   an emergency exit.

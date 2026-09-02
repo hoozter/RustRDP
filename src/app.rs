@@ -135,7 +135,7 @@ impl RustRdpApp {
         for profile in &mut data.profiles {
             profile
                 .display
-                .constrain_to_supported_mode(preferred_resolution, display_catalog.scale_percent);
+                .constrain_to_supported_mode(preferred_resolution);
         }
         let colors = theme::apply(&cc.egui_ctx, data.settings.theme);
         let main_view = if data.profiles.is_empty() {
@@ -782,10 +782,9 @@ impl RustRdpApp {
                     .map(|profile| profile.id)
                     .collect();
                 for profile in &mut profiles {
-                    profile.display.constrain_to_supported_mode(
-                        self.display_catalog.preferred_resolution(),
-                        self.display_catalog.scale_percent,
-                    );
+                    profile
+                        .display
+                        .constrain_to_supported_mode(self.display_catalog.preferred_resolution());
                     if !ids.insert(profile.id) {
                         profile.id = Uuid::new_v4();
                         while !ids.insert(profile.id) {
@@ -1565,15 +1564,11 @@ fn profile_editor(
                     if profile.display.mode != previous_mode {
                         profile.display.constrain_to_supported_mode(
                             displays.preferred_resolution(),
-                            displays.scale_percent,
                         );
                     }
-                    let dynamic_available = profile
-                        .display
-                        .dynamic_resolution_available(displays.scale_percent);
+                    let dynamic_available = profile.display.dynamic_resolution_available();
                     profile.display.constrain_to_supported_mode(
                         displays.preferred_resolution(),
-                        displays.scale_percent,
                     );
                     ui.add_space(8.0);
                     field_label(ui, "Resolution", colors);
@@ -1582,7 +1577,7 @@ fn profile_editor(
                             if choice_card(
                                 &mut columns[0],
                                 "Live resize",
-                                "Change the remote desktop with the window",
+                                "Updates after you finish resizing the window",
                                 profile.display.dynamic_resolution,
                                 colors,
                             )
@@ -1614,7 +1609,7 @@ fn profile_editor(
                                 "Fullscreen uses a fixed remote desktop size fitted to this display."
                             }
                             DisplayMode::Windowed => {
-                                "Fractional Wayland scaling makes live remote resizing unreliable. RustRDP uses a fixed remote size and fits it to the window instead."
+                                "Live resize is unavailable with this FreeRDP client. Choose a fixed remote desktop size below."
                             }
                         };
                         info_banner(ui, icons::INFO, explanation, colors);
@@ -1712,7 +1707,7 @@ fn profile_editor(
                         info_banner(
                             ui,
                             icons::INFO,
-                            "Live resize asks Windows for a new desktop size when the window changes.",
+                            "Live resize asks Windows for a new desktop size after resizing settles.",
                             colors,
                         );
                     }
