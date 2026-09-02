@@ -192,7 +192,7 @@ pub struct Display {
 impl Default for Display {
     fn default() -> Self {
         Self {
-            dynamic_resolution: true,
+            dynamic_resolution: false,
             mode: DisplayMode::BorderlessMaximized,
             resolution: None,
             match_local_scale: false,
@@ -209,6 +209,25 @@ impl Display {
             self.scale_percent
         };
         percent.clamp(100, 500)
+    }
+
+    pub fn dynamic_resolution_available(&self, local_scale_percent: Option<u16>) -> bool {
+        self.mode == DisplayMode::Windowed
+            && local_scale_percent.is_none_or(|percent| percent / 100 * 100 == percent)
+    }
+
+    pub fn constrain_to_supported_mode(
+        &mut self,
+        preferred_resolution: Resolution,
+        local_scale_percent: Option<u16>,
+    ) -> bool {
+        if self.dynamic_resolution && !self.dynamic_resolution_available(local_scale_percent) {
+            self.dynamic_resolution = false;
+            self.resolution = Some(preferred_resolution);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -276,13 +295,57 @@ mod tests {
     #[test]
     fn defaults_are_crisp_and_convenient() {
         let profile = Profile::default();
-        assert!(profile.display.dynamic_resolution);
+        assert!(!profile.display.dynamic_resolution);
         assert_eq!(profile.display.mode, DisplayMode::BorderlessMaximized);
         assert_eq!(profile.display.effective_scale_percent(None), 100);
         assert!(profile.resources.clipboard);
         assert!(profile.resources.audio);
         assert!(profile.resources.printers);
         assert!(!profile.resources.microphone);
+    }
+
+    #[test]
+    fn borderless_and_fractional_display_modes_fall_back_to_fixed_resolution() {
+        let preferred = Resolution {
+            width: 2880,
+            height: 1800,
+        };
+        let mut borderless = Display {
+            dynamic_resolution: true,
+            ..Display::default()
+        };
+        assert!(borderless.constrain_to_supported_mode(preferred, Some(100)));
+        assert!(!borderless.dynamic_resolution);
+        assert_eq!(borderless.resolution, Some(preferred));
+
+        let mut fractional = Display {
+            dynamic_resolution: true,
+            mode: DisplayMode::Windowed,
+            ..Display::default()
+        };
+        assert!(fractional.constrain_to_supported_mode(preferred, Some(175)));
+        assert!(!fractional.dynamic_resolution);
+        assert_eq!(fractional.resolution, Some(preferred));
+    }
+
+    #[test]
+    fn live_resize_remains_available_for_an_unscaled_window() {
+        let mut display = Display {
+            dynamic_resolution: true,
+            mode: DisplayMode::Windowed,
+            resolution: None,
+            ..Display::default()
+        };
+
+        assert!(!display.constrain_to_supported_mode(
+            Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            Some(100),
+        ));
+        assert!(display.dynamic_resolution);
+        assert_eq!(display.resolution, None);
     }
 
     #[test]

@@ -52,6 +52,12 @@ pub enum BackendError {
     UnsafeCredentialHandoff,
     #[error("the selected FreeRDP client does not support dynamic resolution")]
     DynamicResolutionUnsupported,
+    #[error("dynamic resolution is only available in a resizable window")]
+    DynamicResolutionModeUnsupported,
+    #[error(
+        "dynamic resolution is unreliable with fractional Wayland display scaling; use a fixed remote size instead"
+    )]
+    DynamicResolutionFractionalScaleUnsupported,
     #[error("the selected FreeRDP client does not support fixed-resolution scaling")]
     SmartSizingUnsupported,
     #[error("the selected FreeRDP client does not support remote display scaling")]
@@ -120,6 +126,14 @@ impl FreeRdpBackend {
         }
         if profile.display.dynamic_resolution && !self.capabilities.dynamic_resolution {
             return Err(BackendError::DynamicResolutionUnsupported);
+        }
+        if profile.display.dynamic_resolution && profile.display.mode != DisplayMode::Windowed {
+            return Err(BackendError::DynamicResolutionModeUnsupported);
+        }
+        if profile.display.dynamic_resolution
+            && local_scale_percent.is_some_and(|percent| percent / 100 * 100 != percent)
+        {
+            return Err(BackendError::DynamicResolutionFractionalScaleUnsupported);
         }
         if !profile.display.dynamic_resolution
             && profile.display.resolution.is_some()
@@ -380,6 +394,7 @@ mod tests {
     #[test]
     fn dynamic_resolution_does_not_also_force_a_stale_fixed_size() {
         let mut profile = Profile::default();
+        profile.display.mode = DisplayMode::Windowed;
         profile.display.dynamic_resolution = true;
         profile.display.resolution = Some(Resolution {
             width: 1920,
@@ -396,6 +411,32 @@ mod tests {
 
         assert!(args.contains(&"+dynamic-resolution".to_owned()));
         assert!(!args.iter().any(|argument| argument.starts_with("/size:")));
+    }
+
+    #[test]
+    fn dynamic_resolution_rejects_non_resizable_desktop_modes() {
+        let mut profile = Profile::default();
+        profile.display.mode = DisplayMode::BorderlessMaximized;
+        profile.display.dynamic_resolution = true;
+
+        assert!(
+            capable_backend()
+                .build_connection(&profile, false, Some(100))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn dynamic_resolution_rejects_fractionally_scaled_wayland_displays() {
+        let mut profile = Profile::default();
+        profile.display.mode = DisplayMode::Windowed;
+        profile.display.dynamic_resolution = true;
+
+        assert!(
+            capable_backend()
+                .build_connection(&profile, false, Some(175))
+                .is_err()
+        );
     }
 
     #[test]

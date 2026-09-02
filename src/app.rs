@@ -122,7 +122,7 @@ impl RustRdpApp {
         cc.egui_ctx.set_fonts(fonts);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let config_path = storage::default_config_path().ok();
-        let (data, load_error) = match config_path.as_deref().map(storage::load) {
+        let (mut data, load_error) = match config_path.as_deref().map(storage::load) {
             Some(Ok(data)) => (data, None),
             Some(Err(error)) => (AppData::default(), Some(error.to_string())),
             None => (
@@ -130,6 +130,13 @@ impl RustRdpApp {
                 Some("Could not determine the XDG configuration directory".to_owned()),
             ),
         };
+        let display_catalog = DisplayCatalog::detect();
+        let preferred_resolution = display_catalog.preferred_resolution();
+        for profile in &mut data.profiles {
+            profile
+                .display
+                .constrain_to_supported_mode(preferred_resolution, display_catalog.scale_percent);
+        }
         let colors = theme::apply(&cc.egui_ctx, data.settings.theme);
         let main_view = if data.profiles.is_empty() {
             MainView::QuickConnect
@@ -170,7 +177,7 @@ impl RustRdpApp {
             quitting: false,
             minimize_on_first_frame: start_minimized,
             colors,
-            display_catalog: DisplayCatalog::detect(),
+            display_catalog,
         }
     }
 
@@ -775,6 +782,10 @@ impl RustRdpApp {
                     .map(|profile| profile.id)
                     .collect();
                 for profile in &mut profiles {
+                    profile.display.constrain_to_supported_mode(
+                        self.display_catalog.preferred_resolution(),
+                        self.display_catalog.scale_percent,
+                    );
                     if !ids.insert(profile.id) {
                         profile.id = Uuid::new_v4();
                         while !ids.insert(profile.id) {
@@ -1529,6 +1540,7 @@ fn profile_editor(
                     350.0,
                     colors,
                     |ui| {
+                    let previous_mode = profile.display.mode;
                     field_label(ui, "Window mode", colors);
                     egui::ComboBox::from_id_salt("profile-display-mode")
                         .selected_text(display_mode_name(profile.display.mode))
@@ -1550,34 +1562,63 @@ fn profile_editor(
                                 "Fullscreen with safety bar",
                             );
                         });
+                    if profile.display.mode != previous_mode {
+                        profile.display.constrain_to_supported_mode(
+                            displays.preferred_resolution(),
+                            displays.scale_percent,
+                        );
+                    }
+                    let dynamic_available = profile
+                        .display
+                        .dynamic_resolution_available(displays.scale_percent);
+                    profile.display.constrain_to_supported_mode(
+                        displays.preferred_resolution(),
+                        displays.scale_percent,
+                    );
                     ui.add_space(8.0);
                     field_label(ui, "Resolution", colors);
-                    ui.columns(2, |columns| {
-                        if choice_card(
-                            &mut columns[0],
-                            "Dynamic",
-                            "Adapts when the window changes",
-                            profile.display.dynamic_resolution,
-                            colors,
-                        )
-                        .clicked()
-                        {
-                            profile.display.dynamic_resolution = true;
-                            profile.display.resolution = None;
-                        }
-                        if choice_card(
-                            &mut columns[1],
-                            "Fixed",
-                            "Use an exact desktop size",
-                            !profile.display.dynamic_resolution,
-                            colors,
-                        )
-                        .clicked()
-                        {
-                            profile.display.dynamic_resolution = false;
-                            profile.display.resolution = Some(displays.preferred_resolution());
-                        }
-                    });
+                    if dynamic_available {
+                        ui.columns(2, |columns| {
+                            if choice_card(
+                                &mut columns[0],
+                                "Live resize",
+                                "Change the remote desktop with the window",
+                                profile.display.dynamic_resolution,
+                                colors,
+                            )
+                            .clicked()
+                            {
+                                profile.display.dynamic_resolution = true;
+                                profile.display.resolution = None;
+                            }
+                            if choice_card(
+                                &mut columns[1],
+                                "Fixed & fit",
+                                "Keep one remote size and scale it locally",
+                                !profile.display.dynamic_resolution,
+                                colors,
+                            )
+                            .clicked()
+                            {
+                                profile.display.dynamic_resolution = false;
+                                profile.display.resolution =
+                                    Some(displays.preferred_resolution());
+                            }
+                        });
+                    } else {
+                        let explanation = match profile.display.mode {
+                            DisplayMode::BorderlessMaximized => {
+                                "Borderless desktop uses the work area, so it has no resize handles. Choose the remote desktop size below."
+                            }
+                            DisplayMode::Fullscreen => {
+                                "Fullscreen uses a fixed remote desktop size fitted to this display."
+                            }
+                            DisplayMode::Windowed => {
+                                "Fractional Wayland scaling makes live remote resizing unreliable. RustRDP uses a fixed remote size and fits it to the window instead."
+                            }
+                        };
+                        info_banner(ui, icons::INFO, explanation, colors);
+                    }
                     if !profile.display.dynamic_resolution {
                         let resolution = profile
                             .display
@@ -1667,11 +1708,11 @@ fn profile_editor(
                             "All keys go to the remote desktop. Use the safety bar or Right Shift + D to exit.",
                             colors,
                         );
-                    } else {
+                    } else if profile.display.dynamic_resolution {
                         info_banner(
                             ui,
                             icons::INFO,
-                            "Dynamic mode stays sharp as the window changes size.",
+                            "Live resize asks Windows for a new desktop size when the window changes.",
                             colors,
                         );
                     }
