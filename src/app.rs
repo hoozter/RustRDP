@@ -468,7 +468,7 @@ impl RustRdpApp {
             let quick_selected = self.main_view == MainView::QuickConnect;
             if navigation_button(
                 ui,
-                icons::PLAY,
+                icons::CAST_CONNECTED,
                 "Quick connect",
                 quick_selected,
                 self.colors,
@@ -1145,7 +1145,7 @@ fn profile_summary(
             &mut columns[0],
             icons::KEY,
             "Connection",
-            190.0,
+            210.0,
             colors,
             |ui| {
                 detail_row(ui, "Computer", &profile.connection.host, colors);
@@ -1168,7 +1168,7 @@ fn profile_summary(
             &mut columns[1],
             icons::DISPLAY,
             "Display",
-            190.0,
+            210.0,
             colors,
             |ui| {
                 detail_row(
@@ -2155,7 +2155,7 @@ fn summary_card(
         .inner_margin(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(min_height);
+            ui.set_height(min_height);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(icon).size(18.0).color(colors.accent));
                 ui.label(
@@ -2243,19 +2243,24 @@ fn navigation_button(
     colors: Colors,
 ) -> egui::Response {
     ui.add_sized(
-        [ui.available_width(), 38.0],
+        [ui.available_width(), 40.0],
         egui::Button::new(
             RichText::new(format!("{icon}  {label}"))
                 .size(14.5)
                 .color(if selected { colors.heading } else { colors.dim }),
         )
+        .right_text("")
         .selected(selected)
-        .fill(if selected {
-            colors.selected
-        } else {
-            Color32::TRANSPARENT
-        })
-        .stroke(egui::Stroke::NONE),
+        .fill(if selected { colors.selected } else { colors.bg })
+        .stroke(egui::Stroke::new(
+            1.0,
+            if selected {
+                colors.accent
+            } else {
+                colors.border
+            },
+        ))
+        .corner_radius(egui::CornerRadius::same(6)),
     )
 }
 
