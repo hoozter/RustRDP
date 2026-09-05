@@ -47,7 +47,12 @@ pub fn set_enabled(path: &Path, executable: &Path, enabled: bool) -> Result<(), 
     })?;
     let contents = format!(
         "[Desktop Entry]\nType=Application\nName=RustRDP\nComment=FreeRDP connection manager\nExec={} --minimized\nIcon=com.hoozter.RustRDP\nTerminal=false\nCategories=Network;RemoteAccess;\nX-GNOME-Autostart-enabled=true\n",
-        desktop_exec_quote(executable)
+        crate::launchers::executable_argument(executable).map_err(|source| {
+            AutostartError::Update {
+                path: path.to_owned(),
+                source,
+            }
+        })?
     );
     let mut options = OpenOptions::new();
     options.create(true).truncate(true).write(true);
@@ -73,18 +78,6 @@ pub fn set_enabled(path: &Path, executable: &Path, enabled: bool) -> Result<(), 
 pub fn set_current_executable_enabled(enabled: bool) -> Result<(), AutostartError> {
     let executable = std::env::current_exe().map_err(AutostartError::NoExecutable)?;
     set_enabled(&default_path()?, &executable, enabled)
-}
-
-fn desktop_exec_quote(path: &Path) -> String {
-    let value = path.to_string_lossy();
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('`', "\\`")
-            .replace('$', "\\$")
-    )
 }
 
 #[cfg(test)]

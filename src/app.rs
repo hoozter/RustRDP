@@ -12,6 +12,7 @@ use crate::sessions::{SessionManager, SessionState};
 use crate::storage;
 use crate::theme::{self, Colors};
 use crate::tray::{TrayAction, TrayIntegration};
+use crate::{launchers, runtime::Runtime};
 use crossbeam_channel::{Receiver, unbounded};
 use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
 use std::collections::HashSet;
@@ -42,6 +43,16 @@ pub struct RustRdpApp {
     minimize_on_first_frame: bool,
     colors: Colors,
     display_catalog: DisplayCatalog,
+    runtime: Runtime,
+    launcher_editor: Option<LauncherEditor>,
+}
+
+struct LauncherEditor {
+    directory: PathBuf,
+    entries: Vec<launchers::Launcher>,
+    profile_id: Option<Uuid>,
+    name: String,
+    error: Option<String>,
 }
 
 struct PasswordPrompt {
@@ -106,7 +117,8 @@ enum MainView {
 }
 
 impl RustRdpApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, start_minimized: bool) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, start_minimized: bool, runtime: Runtime) -> Self {
+        runtime.attach(&cc.egui_ctx);
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "material-icons".to_owned(),
@@ -178,6 +190,8 @@ impl RustRdpApp {
             minimize_on_first_frame: start_minimized,
             colors,
             display_catalog,
+            runtime,
+            launcher_editor: None,
         }
     }
 
@@ -401,14 +415,29 @@ impl RustRdpApp {
     }
 
     fn process_tray_actions(&mut self, ctx: &egui::Context) {
-        while let Ok(action) = self.tray_actions.try_recv() {
+        while let Some(action) = self
+            .tray_actions
+            .try_recv()
+            .ok()
+            .or_else(|| self.runtime.actions.try_recv().ok())
+        {
             match action {
                 TrayAction::OpenWindow => show_main_window(ctx),
                 TrayAction::OpenSettings => {
                     self.show_settings = true;
                     show_main_window(ctx);
                 }
-                TrayAction::Connect(id) => self.request_connect(id),
+                TrayAction::Connect(id) => {
+                    self.selected = Some(id);
+                    self.main_view = MainView::Connections;
+                    self.minimize_on_first_frame = false;
+                    show_main_window(ctx);
+                    if self.data.profiles.iter().any(|profile| profile.id == id) {
+                        self.request_connect(id);
+                    } else {
+                        self.error("This launcher's saved connection no longer exists. Remove it in Launchers.");
+                    }
+                }
                 TrayAction::ShowSession(id) => {
                     if let Err(error) = self.sessions.show(id) {
                         self.error(error.to_string());
@@ -449,6 +478,9 @@ impl RustRdpApp {
                         if toolbar_button(ui, icons::SETTINGS, "Settings", self.colors).clicked() {
                             self.show_settings = true;
                         }
+                        if toolbar_button(ui, icons::EXPORT, "Launchers", self.colors).clicked() {
+                            self.open_launcher_editor(None);
+                        }
                     });
                 });
             });
@@ -468,7 +500,7 @@ impl RustRdpApp {
             let quick_selected = self.main_view == MainView::QuickConnect;
             if navigation_button(
                 ui,
-                icons::CAST_CONNECTED,
+                icons::REMOTE_CONNECT,
                 "Quick connect",
                 quick_selected,
                 self.colors,
@@ -637,6 +669,7 @@ impl RustRdpApp {
             SummaryAction::None => {}
             SummaryAction::Connect(id) => self.request_connect(id),
             SummaryAction::Edit(id) => self.begin_edit(id),
+            SummaryAction::Launcher(id) => self.open_launcher_editor(Some(id)),
             SummaryAction::Duplicate => self.duplicate_selected(),
             SummaryAction::Delete(id) => {
                 let remove_credential = self
@@ -662,6 +695,126 @@ impl RustRdpApp {
             SessionAction::Reconnect(profile) => {
                 self.request_connect_profile(profile, true);
             }
+        }
+    }
+
+    fn open_launcher_editor(&mut self, profile_id: Option<Uuid>) {
+        let result = launchers::directory().and_then(|directory| {
+            let entries = launchers::list(&directory)?;
+            Ok((directory, entries))
+        });
+        match result {
+            Ok((directory, entries)) => {
+                let profile_id = profile_id
+                    .or(self.selected)
+                    .or_else(|| self.data.profiles.first().map(|p| p.id));
+                let name = entries
+                    .iter()
+                    .find(|entry| Some(entry.id) == profile_id)
+                    .map(|entry| entry.name.clone())
+                    .or_else(|| {
+                        self.data
+                            .profiles
+                            .iter()
+                            .find(|p| Some(p.id) == profile_id)
+                            .map(|p| p.name.clone())
+                    })
+                    .unwrap_or_default();
+                self.launcher_editor = Some(LauncherEditor {
+                    directory,
+                    entries,
+                    profile_id,
+                    name,
+                    error: None,
+                });
+            }
+            Err(error) => self.error(error.to_string()),
+        }
+    }
+
+    fn show_launcher_editor(&mut self, ctx: &egui::Context) {
+        let Some(mut editor) = self.launcher_editor.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut save = false;
+        let mut remove = None;
+        egui::Window::new("Connection launchers")
+            .open(&mut open).collapsible(false).default_width(480.0)
+            .show(ctx, |ui| {
+                ui.label("Create a named shortcut in your application menu, then pin it to your taskbar.");
+                ui.label("Updating a shortcut keeps the same file and your existing pin.");
+                ui.add_space(8.0);
+                let before = editor.profile_id;
+                egui::ComboBox::from_label("Saved connection")
+                    .selected_text(self.data.profiles.iter().find(|p| Some(p.id) == editor.profile_id)
+                        .map(|p| p.name.as_str()).unwrap_or("Choose a connection"))
+                    .show_ui(ui, |ui| {
+                        for profile in &self.data.profiles {
+                            ui.selectable_value(&mut editor.profile_id, Some(profile.id), &profile.name);
+                        }
+                    });
+                if before != editor.profile_id {
+                    editor.name = editor.entries.iter().find(|entry| Some(entry.id) == editor.profile_id)
+                        .map(|entry| entry.name.clone())
+                        .or_else(|| self.data.profiles.iter().find(|p| Some(p.id) == editor.profile_id).map(|p| p.name.clone()))
+                        .unwrap_or_default();
+                }
+                ui.label("Launcher name");
+                ui.add(egui::TextEdit::singleline(&mut editor.name).desired_width(f32::INFINITY)
+                    .margin(egui::vec2(8.0, 6.0)).hint_text("For example: Work desktop"));
+                let exists = editor.entries.iter().any(|entry| Some(entry.id) == editor.profile_id);
+                let valid_profile = self.data.profiles.iter().any(|p| Some(p.id) == editor.profile_id);
+                save = ui.add_enabled(valid_profile && !editor.name.trim().is_empty(),
+                    egui::Button::new(if exists { "Update launcher" } else { "Create launcher" })).clicked();
+                ui.separator();
+                ui.label(RichText::new("Created launchers").strong());
+                if editor.entries.is_empty() { ui.label("No launchers created yet."); }
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    for entry in &editor.entries {
+                        ui.push_id(entry.id, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.selectable_label(Some(entry.id) == editor.profile_id, &entry.name)
+                                    .on_hover_text(entry.path.display().to_string()).clicked() {
+                                    editor.profile_id = Some(entry.id);
+                                    editor.name = entry.name.clone();
+                                }
+                                if !self.data.profiles.iter().any(|p| p.id == entry.id) {
+                                    ui.label(RichText::new("Connection removed").color(self.colors.muted));
+                                }
+                                if ui.button(format!("{} Remove", icons::DELETE)).clicked() { remove = Some(entry.id); }
+                            });
+                        });
+                    }
+                });
+                ui.small("Launchers contain only the connection ID. They use the latest saved settings and your desktop wallet.");
+                if let Some(error) = &editor.error { ui.colored_label(self.colors.error, error); }
+            });
+        let operation = if save {
+            editor.profile_id.map(|id| {
+                std::env::current_exe().and_then(|exe| {
+                    launchers::save(&editor.directory, id, &editor.name, &exe).map(|_| ())
+                })
+            })
+        } else {
+            remove.map(|id| launchers::remove(&editor.directory, id))
+        };
+        if let Some(result) = operation {
+            match result.and_then(|()| launchers::list(&editor.directory)) {
+                Ok(entries) => {
+                    editor.entries = entries;
+                    editor.error = None;
+                    self.success(if remove.is_some() {
+                        "Launcher removed. Unpin it from the taskbar if it was pinned."
+                    } else {
+                        "Launcher saved in your application menu"
+                    });
+                }
+                Err(error) => editor.error = Some(error.to_string()),
+            }
+        }
+        if open {
+            self.launcher_editor = Some(editor);
         }
     }
 
@@ -937,6 +1090,7 @@ impl RustRdpApp {
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label(format!("Delete “{}” from RustRDP?", profile.name));
+                ui.label("Its application-menu launcher will also be removed, if present.");
                 if profile.connection.save_password {
                     ui.checkbox(
                         &mut prompt.remove_credential,
@@ -956,6 +1110,13 @@ impl RustRdpApp {
                 });
             });
         if delete {
+            if let Err(error) =
+                launchers::directory().and_then(|dir| launchers::remove(&dir, profile.id))
+            {
+                self.error(error.to_string());
+                self.delete_prompt = Some(prompt);
+                return;
+            }
             if prompt.remove_credential
                 && let Err(error) = CredentialStore::delete(&profile.credential_id())
             {
@@ -1006,6 +1167,11 @@ impl RustRdpApp {
 impl eframe::App for RustRdpApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
+        if self.runtime.terminating() {
+            self.quitting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         self.process_tray_actions(&ctx);
         if self.minimize_on_first_frame {
             self.minimize_on_first_frame = false;
@@ -1027,14 +1193,20 @@ impl eframe::App for RustRdpApp {
                 ),
             });
         }
-        if ctx.input(|input| input.viewport().close_requested())
-            && !self.quitting
-            && self.data.settings.close_to_tray
-            && self.tray.is_some()
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            hide_main_window(&ctx);
-            self.success("RustRDP is still available in the system tray");
+        if ctx.input(|input| input.viewport().close_requested()) {
+            let logout = self.runtime.desktop_is_shutting_down();
+            if crate::runtime::should_hide_on_close(
+                self.data.settings.close_to_tray,
+                self.tray.is_some(),
+                self.quitting,
+                logout,
+            ) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                hide_main_window(&ctx);
+                self.success("RustRDP is still available in the system tray");
+            } else {
+                self.quitting = true;
+            }
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(self.colors.bg))
@@ -1059,16 +1231,22 @@ impl eframe::App for RustRdpApp {
                         .inner_margin(egui::Margin::symmetric(16, 6))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.set_height(content_height);
-                            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                self.show_main_content(ui);
-                            });
+                            ui.set_height((content_height - 12.0).max(0.0));
+                            egui::ScrollArea::vertical()
+                                .id_salt("main-content")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                        self.show_main_content(ui);
+                                    });
+                                });
                         });
                 });
             });
         self.show_settings_window(&ctx);
         self.show_password_prompt(&ctx);
         self.show_delete_prompt(&ctx);
+        self.show_launcher_editor(&ctx);
         ctx.request_repaint_after(Duration::from_millis(250));
     }
 }
@@ -1088,6 +1266,7 @@ enum SummaryAction {
     None,
     Connect(Uuid),
     Edit(Uuid),
+    Launcher(Uuid),
     Duplicate,
     Delete(Uuid),
     ToggleFavorite(Uuid),
@@ -1236,6 +1415,9 @@ fn profile_summary(
     });
     ui.add_space(12.0);
     ui.horizontal(|ui| {
+        if toolbar_button(ui, icons::EXPORT, "Launcher", colors).clicked() {
+            action = SummaryAction::Launcher(profile.id);
+        }
         if toolbar_button(ui, icons::CONTENT_COPY, "Duplicate", colors).clicked() {
             action = SummaryAction::Duplicate;
         }
@@ -1467,278 +1649,266 @@ fn profile_editor(
         );
     });
     ui.add_space(8.0);
-    egui::ScrollArea::vertical()
-        .id_salt("profile-editor")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            if *section == EditorSection::Connection {
-                settings_card(
-                    ui,
-                    icons::KEY,
-                    "Connection",
-                    "Where to connect and which account to use.",
-                    350.0,
-                    colors,
-                    |ui| {
-                    labeled_field(ui, "Connection name", |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut profile.name)
-                                .margin(egui::Margin::symmetric(8, 5))
-                                .desired_width(f32::INFINITY),
+    if *section == EditorSection::Connection {
+        settings_card(
+            ui,
+            icons::KEY,
+            "Connection",
+            "Where to connect and which account to use.",
+            350.0,
+            colors,
+            |ui| {
+                labeled_field(ui, "Connection name", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut profile.name)
+                            .margin(egui::Margin::symmetric(8, 5))
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+                labeled_field(ui, "Computer or IP address", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut profile.connection.host)
+                            .hint_text("workpc.example.com or 192.168.1.10")
+                            .margin(egui::Margin::symmetric(8, 5))
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+                ui.columns(2, |columns| {
+                    labeled_field(&mut columns[0], "Port", |ui| {
+                        port_input(
+                            ui,
+                            &mut profile.connection.port,
+                            ui.id().with(("profile-port", profile.id)),
                         );
                     });
-                    labeled_field(ui, "Computer or IP address", |ui| {
+                    labeled_field(&mut columns[1], "Domain", |ui| {
                         ui.add(
-                            egui::TextEdit::singleline(&mut profile.connection.host)
-                                .hint_text("workpc.example.com or 192.168.1.10")
-                                .margin(egui::Margin::symmetric(8, 5))
-                                .desired_width(f32::INFINITY),
-                        );
-                    });
-                    ui.columns(2, |columns| {
-                        labeled_field(&mut columns[0], "Port", |ui| {
-                            port_input(
-                                ui,
-                                &mut profile.connection.port,
-                                ui.id().with(("profile-port", profile.id)),
-                            );
-                        });
-                        labeled_field(&mut columns[1], "Domain", |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut profile.connection.domain)
-                                    .hint_text("Optional")
-                                    .margin(egui::Margin::symmetric(8, 5))
-                                    .desired_width(f32::INFINITY),
-                            );
-                        });
-                    });
-                    labeled_field(ui, "Username", |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut profile.connection.username)
+                            egui::TextEdit::singleline(&mut profile.connection.domain)
                                 .hint_text("Optional")
                                 .margin(egui::Margin::symmetric(8, 5))
                                 .desired_width(f32::INFINITY),
                         );
                     });
-                    setting_toggle_row(
-                        ui,
-                        icons::LOCK,
-                        "Save password securely",
-                        "Stored in the desktop wallet, never in the profile file.",
-                        &mut profile.connection.save_password,
-                        colors,
+                });
+                labeled_field(ui, "Username", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut profile.connection.username)
+                            .hint_text("Optional")
+                            .margin(egui::Margin::symmetric(8, 5))
+                            .desired_width(f32::INFINITY),
                     );
                 });
-            }
-            if *section == EditorSection::Display {
-                settings_card(
+                setting_toggle_row(
                     ui,
-                    icons::DISPLAY,
-                    "Display",
-                    "Choose how the remote desktop fits this screen.",
-                    350.0,
+                    icons::LOCK,
+                    "Save password securely",
+                    "Stored in the desktop wallet, never in the profile file.",
+                    &mut profile.connection.save_password,
                     colors,
-                    |ui| {
-                    let previous_mode = profile.display.mode;
-                    field_label(ui, "Window mode", colors);
-                    egui::ComboBox::from_id_salt("profile-display-mode")
-                        .selected_text(display_mode_name(profile.display.mode))
-                        .width(ui.available_width())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut profile.display.mode,
-                                DisplayMode::Windowed,
-                                "Windowed",
-                            );
-                            ui.selectable_value(
-                                &mut profile.display.mode,
-                                DisplayMode::Frameless,
-                                "Frameless — movable",
-                            );
-                            ui.selectable_value(
-                                &mut profile.display.mode,
-                                DisplayMode::BorderlessMaximized,
-                                "Desktop — borderless",
-                            );
-                            ui.selectable_value(
-                                &mut profile.display.mode,
-                                DisplayMode::Fullscreen,
-                                "Fullscreen with safety bar",
-                            );
-                        });
-                    if profile.display.mode != previous_mode {
-                        profile.display.constrain_to_supported_mode(
-                            displays.preferred_resolution(),
+                );
+            },
+        );
+    }
+    if *section == EditorSection::Display {
+        settings_card(
+            ui,
+            icons::DISPLAY,
+            "Display",
+            "Choose how the remote desktop fits this screen.",
+            350.0,
+            colors,
+            |ui| {
+                let previous_mode = profile.display.mode;
+                field_label(ui, "Window mode", colors);
+                egui::ComboBox::from_id_salt("profile-display-mode")
+                    .selected_text(display_mode_name(profile.display.mode))
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut profile.display.mode,
+                            DisplayMode::Windowed,
+                            "Windowed",
                         );
-                    }
-                    let dynamic_available = profile.display.dynamic_resolution_available();
-                    profile.display.constrain_to_supported_mode(
-                        displays.preferred_resolution(),
-                    );
-                    ui.add_space(8.0);
-                    field_label(ui, "Resolution", colors);
-                    if profile.display.mode == DisplayMode::Frameless {
-                        info_banner(
-                            ui,
-                            icons::DISPLAY,
-                            "The safety bar can move and resize this frameless window. Windows adjusts its desktop after each size change.",
-                            colors,
+                        ui.selectable_value(
+                            &mut profile.display.mode,
+                            DisplayMode::Frameless,
+                            "Frameless",
                         );
-                    } else if dynamic_available {
-                        ui.columns(2, |columns| {
-                            if choice_card(
-                                &mut columns[0],
-                                "Live resize",
-                                "Updates after you finish resizing the window",
-                                profile.display.dynamic_resolution,
-                                colors,
-                            )
-                            .clicked()
-                            {
-                                profile.display.dynamic_resolution = true;
-                                profile.display.resolution = None;
-                            }
-                            if choice_card(
-                                &mut columns[1],
-                                "Fixed & fit",
-                                "Keep one remote size and scale it locally",
-                                !profile.display.dynamic_resolution,
-                                colors,
-                            )
-                            .clicked()
-                            {
-                                profile.display.dynamic_resolution = false;
-                                profile.display.resolution =
-                                    Some(displays.preferred_resolution());
-                            }
-                        });
-                    } else {
-                        let explanation = match profile.display.mode {
-                            DisplayMode::BorderlessMaximized => {
-                                "Borderless desktop uses the work area, so it has no resize handles. Choose the remote desktop size below."
-                            }
-                            DisplayMode::Fullscreen => {
-                                "Fullscreen uses a fixed remote desktop size fitted to this display."
-                            }
-                            DisplayMode::Frameless => unreachable!(
-                                "frameless mode always uses live remote resizing"
-                            ),
-                            DisplayMode::Windowed => {
-                                "Live resize is unavailable with this FreeRDP client. Choose a fixed remote desktop size below."
-                            }
-                        };
-                        info_banner(ui, icons::INFO, explanation, colors);
-                    }
-                    if !profile.display.dynamic_resolution {
-                        let resolution = profile
-                            .display
-                            .resolution
-                            .get_or_insert_with(|| displays.preferred_resolution());
-                        ui.add_space(6.0);
-                        egui::ComboBox::from_id_salt("profile-resolution-preset")
-                            .selected_text(resolution_label(*resolution, displays.current))
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| {
-                                for mode in &displays.modes {
-                                    ui.selectable_value(
-                                        resolution,
-                                        *mode,
-                                        resolution_label(*mode, displays.current),
-                                    );
-                                }
-                            });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Custom").color(colors.muted));
-                            ui.add(
-                                egui::DragValue::new(&mut resolution.width)
-                                    .range(320..=16384)
-                                    .suffix(" px"),
-                            );
-                            ui.label("×");
-                            ui.add(
-                                egui::DragValue::new(&mut resolution.height)
-                                    .range(240..=16384)
-                                    .suffix(" px"),
-                            );
-                        });
-                        if let Some(name) = &displays.name {
-                            ui.label(
-                                RichText::new(format!("Supported modes from {name}"))
-                                    .small()
-                                    .color(colors.muted),
-                            );
-                        }
-                    }
-                    ui.add_space(8.0);
-                    field_label(ui, "Remote scaling", colors);
-                    let scale_description = displays.scale_percent.map_or_else(
-                        || "Use the desktop environment's current scale when connecting."
-                            .to_owned(),
-                        |percent| {
-                            let display = displays.name.as_deref().unwrap_or("this display");
-                            format!("Use {display}'s current {percent}% scale when connecting.")
-                        },
-                    );
-                    setting_toggle_row(
+                        ui.selectable_value(
+                            &mut profile.display.mode,
+                            DisplayMode::Fullscreen,
+                            "Fullscreen with safety bar",
+                        );
+                    });
+                if profile.display.mode != previous_mode {
+                    profile
+                        .display
+                        .constrain_to_supported_mode(displays.preferred_resolution());
+                }
+                let dynamic_available = profile.display.dynamic_resolution_available();
+                profile
+                    .display
+                    .constrain_to_supported_mode(displays.preferred_resolution());
+                ui.add_space(8.0);
+                field_label(ui, "Resolution", colors);
+                if profile.display.mode == DisplayMode::Frameless {
+                    info_banner(
                         ui,
                         icons::DISPLAY,
-                        "Match current display",
-                        &scale_description,
-                        &mut profile.display.match_local_scale,
+                        "The safety bar can move and resize this frameless window. Windows adjusts its desktop after each size change.",
                         colors,
                     );
-                    if !profile.display.match_local_scale {
-                        ui.add_space(5.0);
-                        egui::ComboBox::from_id_salt("profile-display-scale")
-                            .selected_text(format!("{}%", profile.display.scale_percent))
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| {
-                                for percent in [100_u16, 125, 150, 175, 200, 225, 250, 300] {
-                                    ui.selectable_value(
-                                        &mut profile.display.scale_percent,
-                                        percent,
-                                        format!("{percent}%"),
-                                    );
-                                }
-                            });
+                } else if dynamic_available {
+                    ui.columns(2, |columns| {
+                        if choice_card(
+                            &mut columns[0],
+                            "Live resize",
+                            "Updates after you finish resizing the window",
+                            profile.display.dynamic_resolution,
+                            colors,
+                        )
+                        .clicked()
+                        {
+                            profile.display.dynamic_resolution = true;
+                            profile.display.resolution = None;
+                        }
+                        if choice_card(
+                            &mut columns[1],
+                            "Fixed & fit",
+                            "Keep one remote size and scale it locally",
+                            !profile.display.dynamic_resolution,
+                            colors,
+                        )
+                        .clicked()
+                        {
+                            profile.display.dynamic_resolution = false;
+                            profile.display.resolution = Some(displays.preferred_resolution());
+                        }
+                    });
+                } else {
+                    let explanation = match profile.display.mode {
+                        DisplayMode::Fullscreen => {
+                            "Fullscreen uses a fixed remote desktop size fitted to this display."
+                        }
+                        DisplayMode::Frameless => {
+                            unreachable!("frameless mode always uses live remote resizing")
+                        }
+                        DisplayMode::Windowed => {
+                            "Live resize is unavailable with this FreeRDP client. Choose a fixed remote desktop size below."
+                        }
+                    };
+                    info_banner(ui, icons::INFO, explanation, colors);
+                }
+                if !profile.display.dynamic_resolution {
+                    let resolution = profile
+                        .display
+                        .resolution
+                        .get_or_insert_with(|| displays.preferred_resolution());
+                    ui.add_space(6.0);
+                    egui::ComboBox::from_id_salt("profile-resolution-preset")
+                        .selected_text(resolution_label(*resolution, displays.current))
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| {
+                            for mode in &displays.modes {
+                                ui.selectable_value(
+                                    resolution,
+                                    *mode,
+                                    resolution_label(*mode, displays.current),
+                                );
+                            }
+                        });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Custom").color(colors.muted));
+                        ui.add(
+                            egui::DragValue::new(&mut resolution.width)
+                                .range(320..=16384)
+                                .suffix(" px"),
+                        );
+                        ui.label("×");
+                        ui.add(
+                            egui::DragValue::new(&mut resolution.height)
+                                .range(240..=16384)
+                                .suffix(" px"),
+                        );
+                    });
+                    if let Some(name) = &displays.name {
+                        ui.label(
+                            RichText::new(format!("Supported modes from {name}"))
+                                .small()
+                                .color(colors.muted),
+                        );
                     }
-                    ui.label(
+                }
+                ui.add_space(8.0);
+                field_label(ui, "Remote scaling", colors);
+                let scale_description = displays.scale_percent.map_or_else(
+                    || "Use the desktop environment's current scale when connecting.".to_owned(),
+                    |percent| {
+                        let display = displays.name.as_deref().unwrap_or("this display");
+                        format!("Use {display}'s current {percent}% scale when connecting.")
+                    },
+                );
+                setting_toggle_row(
+                    ui,
+                    icons::DISPLAY,
+                    "Match current display",
+                    &scale_description,
+                    &mut profile.display.match_local_scale,
+                    colors,
+                );
+                if !profile.display.match_local_scale {
+                    ui.add_space(5.0);
+                    egui::ComboBox::from_id_salt("profile-display-scale")
+                        .selected_text(format!("{}%", profile.display.scale_percent))
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| {
+                            for percent in [100_u16, 125, 150, 175, 200, 225, 250, 300] {
+                                ui.selectable_value(
+                                    &mut profile.display.scale_percent,
+                                    percent,
+                                    format!("{percent}%"),
+                                );
+                            }
+                        });
+                }
+                ui.label(
                         RichText::new(
                             "Changes Windows text and app sizing without lowering the selected resolution.",
                         )
                         .small()
                         .color(colors.muted),
                     );
-                    ui.add_space(7.0);
-                    if profile.display.mode == DisplayMode::Fullscreen {
-                        info_banner(
-                            ui,
-                            icons::LOCK,
-                            "All keys go to the remote desktop. Use the safety bar or Right Shift + D to exit.",
-                            colors,
-                        );
-                    } else if profile.display.dynamic_resolution
-                        && profile.display.mode == DisplayMode::Windowed
-                    {
-                        info_banner(
-                            ui,
-                            icons::INFO,
-                            "Live resize asks Windows for a new desktop size after resizing settles.",
-                            colors,
-                        );
-                    }
-                });
-            }
-            if *section == EditorSection::Resources {
-                settings_card(
-                ui,
-                icons::TUNE,
-                "Resources",
-                "Choose which local devices and folders are available remotely.",
-                0.0,
-                colors,
-                |ui| {
+                ui.add_space(7.0);
+                if profile.display.mode == DisplayMode::Fullscreen {
+                    info_banner(
+                        ui,
+                        icons::LOCK,
+                        "All keys go to the remote desktop. Use the safety bar or Right Shift + D to exit.",
+                        colors,
+                    );
+                } else if profile.display.dynamic_resolution
+                    && profile.display.mode == DisplayMode::Windowed
+                {
+                    info_banner(
+                        ui,
+                        icons::INFO,
+                        "Live resize asks Windows for a new desktop size after resizing settles.",
+                        colors,
+                    );
+                }
+            },
+        );
+    }
+    if *section == EditorSection::Resources {
+        settings_card(
+            ui,
+            icons::TUNE,
+            "Resources",
+            "Choose which local devices and folders are available remotely.",
+            0.0,
+            colors,
+            |ui| {
                 ui.columns(2, |columns| {
                     setting_toggle_row(
                         &mut columns[0],
@@ -1784,13 +1954,19 @@ fn profile_editor(
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(icons::FOLDER_OPEN).size(18.0).color(colors.accent));
+                            ui.label(
+                                RichText::new(icons::FOLDER_OPEN)
+                                    .size(18.0)
+                                    .color(colors.accent),
+                            );
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("Local folders").strong());
                                 ui.label(
-                                    RichText::new("Share selected folders with the remote computer.")
-                                        .small()
-                                        .color(colors.muted),
+                                    RichText::new(
+                                        "Share selected folders with the remote computer.",
+                                    )
+                                    .small()
+                                    .color(colors.muted),
                                 );
                             });
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1802,7 +1978,9 @@ fn profile_editor(
                                             *folder_picker_error = None;
                                         }
                                         Ok(None) => {}
-                                        Err(error) => *folder_picker_error = Some(error.to_string()),
+                                        Err(error) => {
+                                            *folder_picker_error = Some(error.to_string())
+                                        }
                                     }
                                 }
                             });
@@ -1811,47 +1989,53 @@ fn profile_editor(
                         for (index, drive) in profile.resources.drives.iter_mut().enumerate() {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut drive.name)
-                                    .hint_text("Share name")
-                                    .margin(egui::Margin::symmetric(8, 5))
-                                    .desired_width(170.0),
-                            );
-                            let mut path = drive.path.to_string_lossy().into_owned();
-                            if ui
-                                .add(
-                                    egui::TextEdit::singleline(&mut path)
-                                        .hint_text("/home/me/Documents")
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut drive.name)
+                                        .hint_text("Share name")
                                         .margin(egui::Margin::symmetric(8, 5))
-                                        .desired_width((ui.available_width() - 145.0).max(160.0)),
-                                )
-                                .changed()
-                            {
+                                        .desired_width(170.0),
+                                );
+                                let mut path = drive.path.to_string_lossy().into_owned();
+                                if ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut path)
+                                            .hint_text("/home/me/Documents")
+                                            .margin(egui::Margin::symmetric(8, 5))
+                                            .desired_width(
+                                                (ui.available_width() - 145.0).max(160.0),
+                                            ),
+                                    )
+                                    .changed()
+                                {
                                     drive.path = PathBuf::from(path);
                                 }
-                                if toolbar_button(ui, icons::FOLDER_OPEN, "Browse", colors).clicked() {
+                                if toolbar_button(ui, icons::FOLDER_OPEN, "Browse", colors)
+                                    .clicked()
+                                {
                                     match file_dialog::choose_folder(Some(&drive.path)) {
                                         Ok(Some(path)) => {
-                                            if drive.name.trim().is_empty() || drive.name == "share" {
+                                            if drive.name.trim().is_empty() || drive.name == "share"
+                                            {
                                                 drive.name = folder_share_name(&path);
                                             }
                                             drive.path = path;
                                             *folder_picker_error = None;
                                         }
                                         Ok(None) => {}
-                                        Err(error) => *folder_picker_error = Some(error.to_string()),
+                                        Err(error) => {
+                                            *folder_picker_error = Some(error.to_string())
+                                        }
                                     }
                                 }
                                 if icon_button(ui, icons::DELETE, colors).clicked() {
-                                remove = Some(index);
-                            }
-                        });
+                                    remove = Some(index);
+                                }
+                            });
                         }
                         if profile.resources.drives.is_empty() {
                             ui.add_space(6.0);
                             ui.label(
-                                RichText::new("No local folders shared yet.")
-                                    .color(colors.muted),
+                                RichText::new("No local folders shared yet.").color(colors.muted),
                             );
                         }
                         if let Some(error) = folder_picker_error.as_deref() {
@@ -1862,9 +2046,9 @@ fn profile_editor(
                             profile.resources.drives.remove(index);
                         }
                     });
-                });
-            }
-        });
+            },
+        );
+    }
     action
 }
 
@@ -1909,22 +2093,28 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
                         show = Some(id);
                     }
                 }
-                SessionState::Exited(exit) => {
+                SessionState::Exited(_) => {
                     if ui.button("Dismiss").clicked() {
                         dismiss = Some(id);
                     }
                     if ui.button("Reconnect").clicked() {
                         reconnect = Some(id);
                     }
-                    ui.label(RichText::new(&exit.message).small().color(colors.dim));
                 }
                 SessionState::Disconnecting => {}
             });
         });
+        if let SessionState::Exited(exit) = &state {
+            ui.add(egui::Label::new(RichText::new(&exit.message).small().color(colors.dim)).wrap());
+        }
         if let SessionState::Exited(exit) = &state
             && !exit.technical_details.is_empty()
         {
-            egui::CollapsingHeader::new("Technical details")
+            let details_id = ui.make_persistent_id(("session-details", id));
+            let reveal_id = details_id.with("reveal");
+            let was_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), details_id)
+                .is_some_and(|state| state.is_open());
+            let details = egui::CollapsingHeader::new("Technical details")
                 .id_salt(("session-details", id))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -1947,6 +2137,23 @@ fn session_list(ui: &mut egui::Ui, sessions: &mut SessionManager, colors: Colors
                             );
                         });
                 });
+            if details.header_response.clicked() {
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(reveal_id, !was_open));
+            }
+            if details.fully_open()
+                && ui
+                    .ctx()
+                    .data(|data| data.get_temp::<bool>(reveal_id).unwrap_or(false))
+            {
+                if let Some(body) = details.body_response {
+                    let visible_log = details.header_response.rect.union(body.rect);
+                    if !ui.clip_rect().contains_rect(visible_log) {
+                        ui.scroll_to_rect(visible_log, Some(Align::BOTTOM));
+                    }
+                }
+                ui.ctx().data_mut(|data| data.remove::<bool>(reveal_id));
+            }
         }
         ui.separator();
         ui.add_space(5.0);
@@ -2655,8 +2862,7 @@ fn greatest_common_divisor(mut left: u32, mut right: u32) -> u32 {
 fn display_mode_name(mode: DisplayMode) -> &'static str {
     match mode {
         DisplayMode::Windowed => "Windowed",
-        DisplayMode::Frameless => "Frameless — movable",
-        DisplayMode::BorderlessMaximized => "Desktop — borderless",
+        DisplayMode::Frameless => "Frameless",
         DisplayMode::Fullscreen => "Fullscreen with safety bar",
     }
 }

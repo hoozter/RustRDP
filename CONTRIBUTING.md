@@ -28,6 +28,8 @@ the bundled Material Symbols family unless there is a strong reason otherwise.
 ## Licensing contributions
 
 By submitting a contribution, you agree that it may be distributed as part of
-RustRDP under the repository's PolyForm Perimeter License 1.0.1. Third-party
+RustRDP under GNU GPL version 3 only (GPL-3.0-only). You retain copyright in
+your contributions; submission does not grant blanket permission to relicense
+them under incompatible terms. Third-party
 code and assets must be compatible, minimal, and recorded in
 `THIRD_PARTY_NOTICES.md`; do not copy material without a documented license.

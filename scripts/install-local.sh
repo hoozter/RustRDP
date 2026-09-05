@@ -14,6 +14,12 @@ install -Dm644 "$project_dir/assets/rustrdp.png" "$HOME/.local/share/icons/hicol
 install -Dm644 "$project_dir/assets/rustrdp-full.svg" "$HOME/.local/share/rustrdp/rustrdp-full.svg"
 install -Dm644 "$project_dir/assets/session-controller.qml" "$HOME/.local/share/rustrdp/session-controller.qml"
 install -Dm644 "$project_dir/assets/MaterialSymbolsFilled.ttf" "$HOME/.local/share/rustrdp/MaterialSymbolsFilled.ttf"
+for notice in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
+    install -Dm644 "$project_dir/$notice" "$HOME/.local/share/rustrdp/legal/$notice"
+done
+install -Dm644 "$project_dir/assets/LICENSES.md" "$HOME/.local/share/rustrdp/legal/assets/LICENSES.md"
+install -Dm644 "$project_dir/vendor/eframe/LICENSE-MIT" "$HOME/.local/share/rustrdp/legal/eframe/LICENSE-MIT"
+install -Dm644 "$project_dir/vendor/eframe/LICENSE-APACHE" "$HOME/.local/share/rustrdp/legal/eframe/LICENSE-APACHE"
 install -Dm644 "$project_dir/packaging/com.hoozter.RustRDP.desktop" "$HOME/.local/share/applications/com.hoozter.RustRDP.desktop"
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache --force --ignore-theme-index "$HOME/.local/share/icons/hicolor" >/dev/null

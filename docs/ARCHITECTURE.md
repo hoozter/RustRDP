@@ -16,8 +16,25 @@ Every connection becomes one external `sdl-freerdp` process.
 - `sessions.rs`: child processes, bounded diagnostics, lifecycle and controller.
 - `desktop.rs`: short-lived, exact-PID KWin scripts for window operations.
 - `tray.rs` and `autostart.rs`: StatusNotifierItem and XDG autostart integration.
+- `launchers.rs`: UUID-addressed desktop entries, name/Exec escaping, atomic
+  replacement, ownership checks and removal. The desktop files are the launcher
+  registry; no duplicate list is stored in the connection configuration.
+- `runtime.rs`: exclusive session-bus ownership and launcher activation at
+  `com.hoozter.RustRDP`, plus termination flags and KDE logout-state detection.
 - `display.rs`: active display modes and scale read from `kscreen-doctor`.
 - `assets/session-controller.qml`: per-session Layer Shell safety bar.
+
+The CLI accepts `--connect <profile-uuid>`. A second process forwards the ID
+through the session bus and exits before reading or writing the configuration.
+The existing UI owns all connection operations and credentials. A session bus
+is required; startup reports an error rather than creating concurrent managers.
+
+On a native close event, RustRDP queries KSMServer's `isShuttingDown` method
+before applying close-to-tray. KDE sets this state before closing session
+windows. The call is bounded to two seconds; outside KDE, ordinary close-to-tray
+behavior remains. SIGTERM/SIGINT flags are checked by the UI and use normal app
+destruction, including session worker cleanup. Native logout integration on
+other desktop environments is not claimed by this KDE-specific check.
 
 ## Connection flow
 
@@ -50,12 +67,18 @@ killed and reaped whenever startup fails, the session ends, or RustRDP exits.
 - **Windowed/fixed:** explicit `/size`, `/smart-sizing` and optional scaling.
 - **Frameless:** `-decorations +workarea +dynamic-resolution`; KWin moves and
   sizes it, then FreeRDP renegotiates the desktop.
-- **Desktop borderless:** `-decorations +workarea` with a fixed
-  remote size fitted locally.
 - **Fullscreen:** `+f` and a Layer Shell controller above it.
 
 Unsupported combinations are normalized in the model, not patched later in the
 command builder. This keeps the editor summary and launched behavior consistent.
+
+The former `borderless-maximized` stored value deserializes as `Frameless`.
+Each controller owns a KWin observer scoped to its FreeRDP process. Geometry,
+activation and minimization changes arrive over a private session-bus connection;
+the script is unloaded with the session. Observation must be acknowledged before
+continuing startup. This does not require the restricted Plasma window-management
+Wayland protocol. The size control and resize script share a screen-relative scale
+based on the larger width/height fraction. Resizing preserves the aspect ratio.
 
 ## Desktop portability
 

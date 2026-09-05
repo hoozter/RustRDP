@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Report remote administrative disconnects separately from unexpected client exits.
+- Scroll overflowing main content and reveal newly expanded session logs without resizing the window.
+
+- Consolidated border-free windows into Frameless; existing borderless profiles migrate automatically.
+- The floating size slider now follows actual window geometry, preserves proportions, and shows its percentage without an obstructive tooltip.
+
+- Accept KDE logout/reboot close requests instead of hiding in the tray; handle
+  termination signals through normal session cleanup.
+- Add named connection launchers with stable in-place updates, removal and
+  single-instance activation using current saved connection settings.
+
+- Adopted GNU GPL version 3 only (GPL-3.0-only) for RustRDP's original code,
+  documentation and artwork, replacing the planned PolyForm Perimeter license.
+- Updated copyright, contributor and redistribution guidance. Third-party
+  components retain their own licenses.
+
 ## 0.5.0 — 2026-09-02
 
 - Added a KDE frameless mode with safety-bar move and work-area size controls.

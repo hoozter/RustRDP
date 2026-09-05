@@ -1,5 +1,11 @@
-Required Notice: Copyright 2026 RustRDP contributors.
+RustRDP
+Copyright (c) 2026 David Campbell (hoozter) and RustRDP contributors.
 
-RustRDP is source-available software licensed under the PolyForm Perimeter
-License 1.0.1. Third-party components remain under their respective licenses;
-see THIRD_PARTY_NOTICES.md.
+RustRDP's original code, documentation and artwork are licensed under the
+GNU General Public License, version 3 only (GPL-3.0-only). See LICENSE.
+
+RustRDP is distributed without any warranty; without even the implied warranty
+of merchantability or fitness for a particular purpose.
+
+RustRDP builds on the work of other projects. Third-party components retain
+their own copyright notices and licenses; see THIRD_PARTY_NOTICES.md.

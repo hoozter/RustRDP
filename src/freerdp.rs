@@ -199,10 +199,6 @@ impl FreeRdpBackend {
                 arguments.push(OsString::from("-decorations"));
                 arguments.push(OsString::from("+workarea"));
             }
-            DisplayMode::BorderlessMaximized => {
-                arguments.push(OsString::from("-decorations"));
-                arguments.push(OsString::from("+workarea"));
-            }
             DisplayMode::Fullscreen => arguments.push(OsString::from("+f")),
         }
         if !profile.display.dynamic_resolution
@@ -374,10 +370,9 @@ mod tests {
     }
 
     #[test]
-    fn borderless_mode_fills_the_workarea_without_exclusive_fullscreen() {
+    fn frameless_mode_does_not_use_exclusive_fullscreen() {
         let mut profile = Profile::default();
-        profile.display.mode = DisplayMode::BorderlessMaximized;
-        profile.display.dynamic_resolution = false;
+        profile.display.mode = DisplayMode::Frameless;
         let command = capable_backend()
             .build_connection(&profile, false, None)
             .unwrap();
@@ -417,7 +412,7 @@ mod tests {
     #[test]
     fn dynamic_resolution_rejects_non_resizable_desktop_modes() {
         let mut profile = Profile::default();
-        profile.display.mode = DisplayMode::BorderlessMaximized;
+        profile.display.mode = DisplayMode::Fullscreen;
         profile.display.dynamic_resolution = true;
 
         assert!(

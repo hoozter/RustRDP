@@ -2,7 +2,7 @@
 name = "rustrdp"
 version = "0.5.0"
 edition = "2024"
-license-file = "LICENSE"
+license = "GPL-3.0-only"
 description = "A polished Linux connection manager for FreeRDP"
 publish = false
 readme = "README.md"
@@ -23,6 +23,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = "1"
+zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
+signal-hook = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

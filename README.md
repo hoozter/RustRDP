@@ -14,8 +14,10 @@ The complete experience currently targets **KDE Plasma 6 on Wayland**.
 ## Highlights
 
 - Saved, searchable and favorite connections, plus quick-connect history.
+- Named application-menu connection launchers that can be updated, removed and
+  pinned to the taskbar.
 - Passwords in Secret Service/KWallet, never in profile files or process arguments.
-- Windowed live resizing, movable frameless sessions, fixed borderless desktop,
+- Windowed live resizing, movable/resizable frameless sessions,
   and keyboard-capturing fullscreen with an always-available safety bar.
 - Current-display resolution, aspect-ratio labels and fractional remote scaling.
 - Clipboard, printer, audio, microphone and folder redirection.
@@ -56,10 +58,13 @@ and KWin window-control integration.
 
 ## License
 
-RustRDP is free to use and source-available under the
-[PolyForm Perimeter License 1.0.1](LICENSE). You may inspect, use, modify and
-redistribute it for permitted purposes, but may not provide a product that
-competes with RustRDP—even under a different name or at no charge.
+RustRDP is free and open-source software under the
+[GNU General Public License, version 3 only](LICENSE) (GPL-3.0-only).
+Personal and business use, modification, redistribution and sale are permitted.
+Distributed derivatives must retain the required notices, identify changes and
+provide corresponding source under GPLv3. Private modifications do not need to
+be published. See [licensing and redistribution](docs/LICENSING.md).
 
-This restriction means RustRDP is **not OSI open source**. Third-party software
-keeps its original license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Copyright (c) 2026 David Campbell (hoozter) and RustRDP contributors.
+Third-party components retain their own licenses and credits; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

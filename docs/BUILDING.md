@@ -11,7 +11,6 @@ safety bar and reliable window arrangement currently use KDE APIs.
 - FreeRDP 3 SDL client (`sdl-freerdp`; package `freerdp-sdl` on Debian/Ubuntu)
 - Qt 6 QML runtime (`qml6`)
 - KDE LayerShellQt QML module
-- KDE Plasma task-manager QML module
 - KWin for close-to-tray restoration and frameless move/size controls
 - a Secret Service-compatible wallet for saved passwords
 - `kdialog` or `zenity` for folder and backup pickers
@@ -53,7 +52,10 @@ cargo run --release
 
 This builds a release binary and installs it under `~/.local` together with the
 desktop entry, icons, wordmark, Material Symbols font and session-controller
-QML. Run the same command to update an installation. Log out and back in if an
+QML. Project license and attribution files are installed under
+`~/.local/share/rustrdp/legal/`; see [redistribution requirements](LICENSING.md)
+before packaging a public binary. Run the same command to update an installation.
+Log out and back in if an
 older launcher icon remains cached.
 
 ## Uninstall
@@ -85,8 +87,16 @@ the wallet manager afterward.
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
+RUSTRDP_PRIVATE_BUS_TEST=1 dbus-run-session -- cargo test private_bus_activation_logout_and_termination -- --ignored --test-threads=1
 cargo build --release
 git diff --check
+```
+
+On a KDE desktop, this opt-in check creates its own temporary window and tests
+real geometry, resizing, minimization, restoration and observer cleanup:
+
+```sh
+RUSTRDP_KWIN_TEST=1 cargo test live_kwin_window_geometry_and_monitor_cleanup --lib -- --ignored --test-threads=1
 ```
 
 `vendor/eframe` contains a documented Linux event-loop fix. Do not replace it

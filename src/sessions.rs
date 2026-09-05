@@ -51,6 +51,7 @@ pub struct SessionExit {
 pub enum SessionExitKind {
     Normal,
     Disconnected,
+    RemoteDisconnect,
     Authentication,
     Certificate,
     Connectivity,
@@ -127,7 +128,7 @@ impl SessionManager {
         used_saved_credential: bool,
         show_controller: bool,
     ) -> Result<Uuid, SessionError> {
-        let controller = if show_controller {
+        let mut controller = if show_controller {
             Some(
                 ControllerServer::start(
                     &profile.name,
@@ -149,6 +150,21 @@ impl SessionManager {
                 Stdio::null()
             });
         let mut child = command.spawn().map_err(SessionError::Spawn)?;
+        if let Some(controller) = controller.as_mut() {
+            match desktop::WindowMonitor::start(child.id()) {
+                Ok(monitor) => {
+                    controller.remote_pid = Some(child.id());
+                    controller.monitor = Some(monitor);
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(SessionError::Controller(io::Error::other(
+                        error.to_string(),
+                    )));
+                }
+            }
+        }
         if connection.password_via_stdin {
             let handoff = child
                 .stdin
@@ -305,9 +321,6 @@ fn watch_process(
     events: Sender<Event>,
     mut controller: Option<ControllerServer>,
 ) {
-    if let Some(controller) = controller.as_mut() {
-        controller.remote_pid = Some(child.id());
-    }
     let output_reader = stderr.map(|stderr| thread::spawn(move || read_bounded(stderr)));
     let started = Instant::now();
     let mut announced_active = false;
@@ -333,7 +346,7 @@ fn watch_process(
                     desktop::begin_window_move(child.id());
                 }
                 ControllerAction::Resize(percent) => {
-                    desktop::set_window_work_area_percent(child.id(), percent);
+                    desktop::set_window_screen_percent(child.id(), percent);
                 }
                 ControllerAction::Disconnect => {
                     request_process_stop(
@@ -412,6 +425,7 @@ struct ControllerServer {
     process: Child,
     route_prefix: String,
     remote_pid: Option<u32>,
+    monitor: Option<desktop::WindowMonitor>,
     can_arrange: bool,
 }
 
@@ -443,6 +457,7 @@ impl ControllerServer {
             process,
             route_prefix,
             remote_pid: None,
+            monitor: None,
             can_arrange,
         };
         controller.wait_until_ready()?;
@@ -458,7 +473,7 @@ impl ControllerServer {
         };
         match read_controller_request(&mut stream, &self.route_prefix) {
             ControllerRequest::State => {
-                write_controller_state(&mut stream, self.remote_pid);
+                write_controller_state(&mut stream, self.remote_pid, self.monitor.as_ref());
                 ControllerAction::None
             }
             ControllerRequest::Action(action) => {
@@ -487,7 +502,9 @@ impl ControllerServer {
                 continue;
             };
             match read_controller_request(&mut stream, &self.route_prefix) {
-                ControllerRequest::State => write_controller_state(&mut stream, self.remote_pid),
+                ControllerRequest::State => {
+                    write_controller_state(&mut stream, self.remote_pid, self.monitor.as_ref())
+                }
                 ControllerRequest::Action(action) => {
                     write_no_content(&mut stream);
                     if action == ControllerAction::Ready {
@@ -540,7 +557,7 @@ fn controller_request_from_text(request: &str, route_prefix: &str) -> Controller
     } else if method == "POST" && path.starts_with(&format!("{route_prefix}/resize/")) {
         path.strip_prefix(&format!("{route_prefix}/resize/"))
             .and_then(|percent| percent.parse::<u8>().ok())
-            .filter(|percent| (55..=100).contains(percent) && percent % 5 == 0)
+            .filter(|percent| (1..=100).contains(percent))
             .map_or(
                 ControllerRequest::Action(ControllerAction::None),
                 |percent| ControllerRequest::Action(ControllerAction::Resize(percent)),
@@ -558,12 +575,26 @@ fn write_no_content(stream: &mut TcpStream) {
     );
 }
 
-fn controller_state_body(remote_pid: Option<u32>) -> String {
-    format!("{{\"pid\":{}}}", remote_pid.unwrap_or(0))
+fn controller_state_body(remote_pid: Option<u32>, state: desktop::WindowState) -> String {
+    format!(
+        "{{\"pid\":{},\"found\":{},\"active\":{},\"minimized\":{},\"sizePercent\":{}}}",
+        remote_pid.unwrap_or(0),
+        state.found,
+        state.active,
+        state.minimized,
+        state.size_percent()
+    )
 }
 
-fn write_controller_state(stream: &mut TcpStream, remote_pid: Option<u32>) {
-    let body = controller_state_body(remote_pid);
+fn write_controller_state(
+    stream: &mut TcpStream,
+    remote_pid: Option<u32>,
+    monitor: Option<&desktop::WindowMonitor>,
+) {
+    let body = controller_state_body(
+        remote_pid,
+        monitor.map(|monitor| monitor.state()).unwrap_or_default(),
+    );
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
         body.len(),
@@ -631,6 +662,15 @@ fn classify_exit(code: Option<i32>, technical: &str, requested_disconnect: bool)
             "Session disconnected",
             "The remote desktop session was closed.",
         )
+    } else if lower
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|token| token == "errinfo_rpc_initiated_disconnect")
+    {
+        (
+            SessionExitKind::RemoteDisconnect,
+            "Disconnected by the remote computer",
+            "Windows reported an administrative disconnect. Check the remote computer's logs for the underlying cause.",
+        )
     } else if lower.contains("logon_failure")
         || lower.contains("status_wrong_password")
         || lower.contains("authentication failed")
@@ -695,6 +735,26 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::path::PathBuf;
+
+    #[test]
+    fn reports_remote_administrative_disconnect_without_inventing_its_cause() {
+        let output = "Kerberos authentication failed during startup\nERRINFO_RPC_INITIATED_DISCONNECT [0x00010001]";
+        let exit = classify_exit(Some(1), output, false);
+        assert_eq!(exit.kind, SessionExitKind::RemoteDisconnect);
+        assert_eq!(exit.title, "Disconnected by the remote computer");
+        assert_eq!(
+            exit.message,
+            "Windows reported an administrative disconnect. Check the remote computer's logs for the underlying cause."
+        );
+        assert_eq!(
+            classify_exit(Some(1), output, true).kind,
+            SessionExitKind::Disconnected
+        );
+        assert_eq!(
+            classify_exit(Some(1), "ERRINFO_RPC_INITIATED_DISCONNECT_BYUSER", false).kind,
+            SessionExitKind::Unexpected
+        );
+    }
 
     #[test]
     fn translates_authentication_failure_and_redacts_secret_diagnostics() {
@@ -769,7 +829,7 @@ mod tests {
             controller_request_from_text("POST /wrong/disconnect HTTP/1.1\r\n", prefix),
             ControllerRequest::Action(ControllerAction::None)
         );
-        for invalid in ["54", "77", "101", "large"] {
+        for invalid in ["0", "-1", "101", "large"] {
             assert_eq!(
                 controller_request_from_text(
                     &format!("POST /private-token/resize/{invalid} HTTP/1.1\r\n"),
@@ -782,19 +842,20 @@ mod tests {
 
     #[test]
     fn controller_state_exposes_only_the_remote_process() {
-        assert_eq!(controller_state_body(Some(1234)), "{\"pid\":1234}");
-        assert_eq!(controller_state_body(None), "{\"pid\":0}");
+        assert_eq!(
+            controller_state_body(Some(1234), desktop::WindowState::default()),
+            "{\"pid\":1234,\"found\":false,\"active\":false,\"minimized\":false,\"sizePercent\":0}"
+        );
     }
 
     #[test]
     fn controller_uses_the_wayland_overlay_layer() {
         let qml = include_str!("../assets/session-controller.qml");
-        assert!(qml.contains("org.kde.taskmanager"));
         assert!(qml.contains("LayerShell.Window.LayerOverlay"));
         assert!(qml.contains("KeyboardInteractivityNone"));
         assert!(qml.contains("collapsedHeight"));
-        assert!(qml.contains("IsActive"));
-        assert!(qml.contains("IsMinimized"));
+        assert!(qml.contains("state.active"));
+        assert!(qml.contains("state.minimized"));
         assert!(qml.contains("sendCommand(\"minimize\")"));
         assert!(qml.contains("sendCommand(\"restore\")"));
         assert!(qml.contains("root.hide()"));

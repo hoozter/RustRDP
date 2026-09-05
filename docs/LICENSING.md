@@ -1,43 +1,69 @@
 # RustRDP licensing
 
-RustRDP's own code, documentation and original artwork are offered under the
-PolyForm Perimeter License 1.0.1 in the repository root.
+RustRDP's original code, documentation and artwork are licensed under the
+GNU General Public License, version 3 only (`GPL-3.0-only`). The complete,
+unmodified license is in [LICENSE](../LICENSE). Copyright and project attribution
+are in [NOTICE](../NOTICE).
 
-## What the choice is intended to allow
+## Use and modification
 
-- personal use at no charge;
-- internal use by individuals and organizations;
-- inspection, learning, modification and contribution;
-- redistribution for purposes that do not compete with RustRDP.
+Personal and business use are permitted without a license fee. You may inspect,
+modify and run the software. Modifications used privately or internally within
+an organization do not need to be published merely because they were made.
 
-## What it is intended to prevent
+## Sharing and selling
 
-The license does not permit providing another product as a substitute for
-RustRDP's functionality or value. The restriction applies even if that product
-has different branding, uses a different interface or language, is hosted as a
-service, or is provided free of charge.
+GPLv3 permits redistribution, renaming, commercial use and selling copies.
+RustRDP does not impose a noncommercial or no-resale restriction.
 
-That use restriction is why the project must be described as **source-available**,
-not open source. The Open Source Definition requires licenses not to restrict
-fields of endeavor and to permit redistribution and derived works under its
-terms.
+When distributing copies or derivatives, comply with GPLv3, including:
 
-## Redistribution requirements
+- preserve the required copyright, license and warranty notices;
+- include the GPLv3 license;
+- mark modified versions with prominent notices of changes and their dates;
+- license distributed derivative works as a whole under GPLv3;
+- when distributing binaries, provide corresponding source through a method
+  allowed by section 6, including the necessary build and installation material.
 
-Anyone distributing RustRDP or permitted modifications must include the license
-terms (or their URL) and every plain-text `Required Notice:` supplied by the
-licensor. The repository's required notice is in `NOTICE`.
+These obligations preserve the original notices and recipients' source rights.
+They do not require an advertising credit or a public GitHub repository. Source
+must be provided as required by the chosen GPL distribution method; recipients
+may redistribute it. Separate, independent works are not automatically GPL
+derivatives just because they are distributed alongside RustRDP.
 
-Third-party components are not relicensed under PolyForm. Their licenses and
-attribution are recorded in `THIRD_PARTY_NOTICES.md`, the bundled eframe license
-files, crate metadata and `Cargo.lock`.
+## Third-party work
 
-## Before the first public release
+The project license does not replace upstream licenses or claim authorship of
+upstream work. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) and
+[assets/LICENSES.md](../assets/LICENSES.md).
 
-Replace the generic copyright-holder wording in `NOTICE` with the preferred
-individual or legal entity name if desired. Also add the final GitHub repository
-URL to `Cargo.toml` after the repository exists. Neither choice changes the
-technical build.
+In particular, the vendored eframe code remains MIT OR Apache-2.0, and bundled
+fonts retain their respective licenses. Other dependencies may carry their own
+source-sharing and notice requirements, including the MPL-2.0 dependency
+`option-ext`. Preserve those rights and satisfy them when distributing a build.
 
-This document explains the project's intended licensing posture; it is not
-legal advice. The verbatim `LICENSE` text controls.
+## Release packaging
+
+Before distributing a binary, review the exact dependency graph in Cargo.lock,
+collect the applicable license texts and copyright notices, and satisfy all
+source-availability requirements. Include RustRDP's LICENSE, NOTICE and
+THIRD_PARTY_NOTICES.md with the distribution. For downloads, provide clear access
+to the matching corresponding source alongside the binary, as required by
+GPLv3 section 6(d). A source link must cover the actual build, including patches
+and required dependency source, not merely point to a changing main branch.
+
+The local installer includes the project license and summary notices under
+`~/.local/share/rustrdp/legal/`. These summaries are not a complete binary
+dependency-license bundle. The full dependency and Qt/KDE runtime compliance
+review remains a prerequisite for public binary distribution. FreeRDP and KDE/Qt
+runtime packages are currently installed separately, not bundled by RustRDP.
+
+## Future license changes
+
+Rights already granted under GPLv3 cannot be withdrawn from compliant recipients.
+A future release under different terms requires the necessary rights to all
+included code. Contributors retain their copyrights; their GPL contributions
+do not automatically authorize incompatible relicensing. Third-party licenses
+continue to apply independently.
+
+This guide summarizes the license; the full GPLv3 text controls.

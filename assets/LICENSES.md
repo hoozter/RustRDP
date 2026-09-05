@@ -1,6 +1,8 @@
 # Bundled asset notices
 
-The RustRDP icon and wordmark in this directory are original project artwork.
+The RustRDP icon and wordmark in this directory are original project artwork,
+Copyright (c) 2026 David Campbell (hoozter), licensed under GPL-3.0-only;
+see ../LICENSE. Third-party assets below retain their original licenses.
 
 `MaterialSymbolsFilled.ttf` contains the Google Material Symbols Outlined font,
 licensed under Apache License 2.0. The historical filename is retained because

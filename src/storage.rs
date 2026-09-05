@@ -116,7 +116,7 @@ pub fn import_profiles(path: &Path) -> Result<Vec<Profile>, StorageError> {
     Ok(archive.profiles)
 }
 
-fn write_atomic(path: &Path, text: &str) -> Result<(), StorageError> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), StorageError> {
     let parent = path.parent().ok_or_else(|| StorageError::Write {
         path: path.to_owned(),
         source: io::Error::new(

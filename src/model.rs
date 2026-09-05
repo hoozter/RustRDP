@@ -234,9 +234,9 @@ impl Display {
 #[serde(rename_all = "kebab-case")]
 pub enum DisplayMode {
     Windowed,
-    Frameless,
     #[default]
-    BorderlessMaximized,
+    #[serde(alias = "borderless-maximized")]
+    Frameless,
     Fullscreen,
 }
 
@@ -305,19 +305,36 @@ mod tests {
     }
 
     #[test]
-    fn borderless_mode_falls_back_to_fixed_resolution() {
+    fn saved_borderless_mode_migrates_to_frameless() {
+        let mut display: Display =
+            toml::from_str("mode = 'borderless-maximized'\ndynamic_resolution = false\n").unwrap();
+        assert_eq!(display.mode, DisplayMode::Frameless);
+        display.constrain_to_supported_mode(Resolution {
+            width: 1920,
+            height: 1080,
+        });
+        assert!(display.dynamic_resolution);
+        assert!(
+            toml::to_string(&display)
+                .unwrap()
+                .contains("mode = \"frameless\"")
+        );
+    }
+
+    #[test]
+    fn fullscreen_mode_falls_back_to_fixed_resolution() {
         let preferred = Resolution {
             width: 2880,
             height: 1800,
         };
-        let mut borderless = Display {
+        let mut fullscreen = Display {
             dynamic_resolution: true,
-            mode: DisplayMode::BorderlessMaximized,
+            mode: DisplayMode::Fullscreen,
             ..Display::default()
         };
-        assert!(borderless.constrain_to_supported_mode(preferred));
-        assert!(!borderless.dynamic_resolution);
-        assert_eq!(borderless.resolution, Some(preferred));
+        assert!(fullscreen.constrain_to_supported_mode(preferred));
+        assert!(!fullscreen.dynamic_resolution);
+        assert_eq!(fullscreen.resolution, Some(preferred));
     }
 
     #[test]

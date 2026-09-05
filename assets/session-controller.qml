@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.layershell 1.0 as LayerShell
-import org.kde.taskmanager as TaskManager
 
 Window {
     id: root
@@ -18,14 +17,26 @@ Window {
     readonly property int collapsedWidth: 76
     readonly property int expandedWidth: canArrange ? 620 : 420
 
-    property int remotePid: 0
     property bool remoteFound: false
     property bool remoteWasFound: false
     property bool remoteActive: false
     property bool remoteMinimized: false
+    property real remoteSizePercent: 0
     property bool minimizeRequested: false
     property bool minimizeObserved: false
     property bool pinned: false
+    property Item hoveredControl: null
+    property bool hintReady: false
+    readonly property bool hintVisible: expanded && hoveredControl !== null && hintReady
+    // Keep the native surface stable while hovering. Only the label's visibility
+    // changes; its transparent space must not trigger a Layer Shell resize.
+    readonly property int panelHeight: expanded ? expandedHeight + 28 : collapsedHeight
+    onHoveredControlChanged: {
+        hintReady = false
+        hintDelay.stop()
+        if (hoveredControl !== null)
+            hintDelay.restart()
+    }
     property bool lingerExpanded: true
     readonly property bool expanded: pinned || lingerExpanded || panelHover.hovered
     readonly property bool sessionVisible: !remoteWasFound
@@ -33,11 +44,11 @@ Window {
 
     onExpandedChanged: {
         root.width = root.expanded ? root.expandedWidth : root.collapsedWidth
-        root.height = root.expanded ? root.expandedHeight : root.collapsedHeight
     }
+    onPanelHeightChanged: root.height = panelHeight
 
     width: expanded ? expandedWidth : collapsedWidth
-    height: expanded ? expandedHeight : collapsedHeight
+    height: panelHeight
     visible: true
     color: "transparent"
     flags: Qt.FramelessWindowHint
@@ -57,10 +68,10 @@ Window {
         source: Qt.resolvedUrl("MaterialSymbolsFilled.ttf")
     }
 
-    TaskManager.TasksModel {
-        id: tasks
-        groupMode: TaskManager.TasksModel.GroupDisabled
-        separateLaunchers: true
+    Timer {
+        id: hintDelay
+        interval: 700
+        onTriggered: root.hintReady = true
     }
 
     function sendCommand(command) {
@@ -80,30 +91,22 @@ Window {
                 return
             try {
                 const state = JSON.parse(request.responseText)
-                root.remotePid = Number(state.pid || 0)
+                root.refreshRemoteWindow(state)
             } catch (error) {
-                root.remotePid = 0
+                console.warn("Invalid remote window state: " + error)
             }
         }
         request.open("GET", controlUrl + "/state")
         request.send("")
     }
 
-    function refreshRemoteWindow() {
-        let found = false
-        let active = false
-        let minimized = false
-        if (remotePid > 0) {
-            for (let row = 0; row < tasks.count; ++row) {
-                const index = tasks.index(row, 0)
-                if (Number(tasks.data(index, TaskManager.AbstractTasksModel.AppPid)) !== remotePid)
-                    continue
-                found = true
-                active = Boolean(tasks.data(index, TaskManager.AbstractTasksModel.IsActive))
-                minimized = Boolean(tasks.data(index, TaskManager.AbstractTasksModel.IsMinimized))
-                break
-            }
-        }
+    function refreshRemoteWindow(state) {
+        const found = Boolean(state.found)
+        const active = Boolean(state.active)
+        const minimized = Boolean(state.minimized)
+        remoteSizePercent = Number(state.sizePercent || 0)
+        if (!sizeSlider.pressed && remoteSizePercent > 0)
+            sizeSlider.value = remoteSizePercent
         remoteFound = found
         remoteWasFound = remoteWasFound || found
         remoteActive = active
@@ -128,7 +131,6 @@ Window {
         repeat: true
         onTriggered: {
             root.refreshControllerState()
-            root.refreshRemoteWindow()
         }
     }
 
@@ -192,12 +194,13 @@ Window {
             id: pointer
             anchors.fill: parent
             hoverEnabled: true
+            onEntered: root.hoveredControl = button
+            onExited: {
+                if (root.hoveredControl === button)
+                    root.hoveredControl = null
+            }
             onClicked: button.triggered()
         }
-
-        ToolTip.visible: pointer.containsMouse
-        ToolTip.text: accessibleName
-        ToolTip.delay: 500
     }
 
     Rectangle {
@@ -211,8 +214,11 @@ Window {
     }
 
     Rectangle {
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
         anchors.margins: 3
+        height: root.expandedHeight - 6
         radius: 10
         color: "#f220242b"
         border.width: 1
@@ -273,13 +279,20 @@ Window {
                 id: sizeSlider
                 visible: root.canArrange
                 Layout.preferredWidth: 120
-                from: 55
+                from: 1
                 to: 100
-                stepSize: 5
-                value: 100
+                stepSize: 1
+                value: 1
+                enabled: root.remoteSizePercent > 0
                 snapMode: Slider.SnapAlways
                 Accessible.name: "Remote window size"
-                Accessible.description: Math.round(value) + "% of the available desktop"
+                Accessible.description: Math.round(value) + "% of the display, preserving window proportions"
+                onHoveredChanged: {
+                    if (hovered)
+                        root.hoveredControl = sizeSlider
+                    else if (root.hoveredControl === sizeSlider)
+                        root.hoveredControl = null
+                }
 
                 onPressedChanged: {
                     if (!pressed)
@@ -314,9 +327,17 @@ Window {
                     border.color: "#4ea1f2"
                 }
 
-                ToolTip.visible: hovered || pressed
-                ToolTip.text: "Remote window size — " + Math.round(value) + "%"
-                ToolTip.delay: 350
+            }
+
+            Label {
+                visible: root.canArrange
+                Layout.preferredWidth: 40
+                text: root.remoteSizePercent > 0
+                    ? Math.round(sizeSlider.pressed ? sizeSlider.value : root.remoteSizePercent) + "%"
+                    : "—"
+                color: "#dce3ea"
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignRight
             }
 
             PanelButton {
@@ -355,6 +376,33 @@ Window {
                 hoverColor: "#59343a"
                 onTriggered: root.sendCommand("disconnect")
             }
+        }
+
+    }
+
+    // Drawn inside this surface, never a native popup that can cover its buttons.
+    Rectangle {
+        id: hoverLabel
+        visible: root.hintVisible
+        enabled: false
+        y: root.expandedHeight + 2
+        width: Math.min(hintText.implicitWidth + 16, root.width - 6)
+        height: 24
+        readonly property real controlCenter: root.hoveredControl
+            ? root.hoveredControl.mapToItem(root.contentItem, root.hoveredControl.width / 2, 0).x : 0
+        x: Math.max(3, Math.min(controlCenter - width / 2, root.width - width - 3))
+        radius: 5
+        color: "#f220242b"
+        border.color: "#4a5663"
+        Text {
+            id: hintText
+            anchors.centerIn: parent
+            width: parent.width - 16
+            text: root.hoveredControl ? root.hoveredControl.Accessible.name : ""
+            color: "#dce3ea"
+            font.pixelSize: 11
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
         }
     }
 }

@@ -64,7 +64,8 @@ not a runtime dependency, and no Ottrin source code is included here.
 
 Direct Rust libraries include crossbeam-channel, directories, egui/eframe,
 egui_extras, keyring, ksni, serde, thiserror, toml, tracing,
-tracing-subscriber, uuid and zeroize. Tests also use tempfile. Exact versions
+tracing-subscriber, uuid, zeroize, zbus (MIT OR Apache-2.0) and signal-hook
+(MIT OR Apache-2.0). Tests also use tempfile. Exact versions
 and the complete transitive dependency graph are locked in `Cargo.lock`; each
 crate retains the license declared in its package metadata and included source.
 
