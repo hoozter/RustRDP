@@ -58,13 +58,5 @@ and KWin window-control integration.
 
 ## License
 
-RustRDP is free and open-source software under the
-[GNU General Public License, version 3 only](LICENSE) (GPL-3.0-only).
-Personal and business use, modification, redistribution and sale are permitted.
-Distributed derivatives must retain the required notices, identify changes and
-provide corresponding source under GPLv3. Private modifications do not need to
-be published. See [licensing and redistribution](docs/LICENSING.md).
-
-Copyright (c) 2026 David Campbell (hoozter) and RustRDP contributors.
-Third-party components retain their own licenses and credits; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Free and open source under [GPLv3](LICENSE).
+See [licensing details](docs/LICENSING.md) and [third-party credits](THIRD_PARTY_NOTICES.md).

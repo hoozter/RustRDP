@@ -6,6 +6,7 @@ license = "GPL-3.0-only"
 description = "A polished Linux connection manager for FreeRDP"
 publish = false
 readme = "README.md"
+repository = "https://github.com/hoozter/RustRDP"
 keywords = ["rdp", "freerdp", "remote-desktop", "wayland", "kde"]
 categories = ["gui", "network-programming"]
 
