@@ -191,7 +191,7 @@ fn tray_icon_from_png(bytes: &[u8]) -> ksni::Icon {
     let icon = eframe::icon_data::from_png_bytes(bytes)
         .expect("the bundled RustRDP tray icon must be a valid PNG");
     let mut data = icon.rgba;
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0 {
         pixel.rotate_right(1);
     }
     ksni::Icon {
