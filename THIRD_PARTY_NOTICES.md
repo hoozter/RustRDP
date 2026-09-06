@@ -52,7 +52,9 @@ description are included in the same directory.
 `assets/MaterialSymbolsFilled.ttf` contains Google Material Symbols Outlined,
 licensed under Apache License 2.0.
 
-- Project and license: <https://github.com/google/material-design-icons>
+- Project: <https://github.com/google/material-design-icons>
+- Full Apache-2.0 text, embedded copyright, and provenance limits:
+  [assets/LICENSES.md](assets/LICENSES.md)
 
 ### Ottrin
 
