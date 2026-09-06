@@ -3887,3 +3887,198 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
+
+## Randomness and zerocopy dependencies
+
+MIT is selected from each package's declared alternatives below. These are
+locked Linux graph entries, not a claim that every entry is present in every binary.
+
+### getrandom 0.2.17 — LICENSE-MIT
+
+Source: <https://crates.io/api/v1/crates/getrandom/0.2.17/download>, `LICENSE-MIT`.
+Archive SHA-256: `ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0`.
+Declared license: `MIT OR Apache-2.0`; MIT selected.
+````text
+Copyright (c) 2018-2024 The rust-random Project Developers
+Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+````
+
+### getrandom 0.3.4 — LICENSE-MIT
+
+Source: <https://crates.io/api/v1/crates/getrandom/0.3.4/download>, `LICENSE-MIT`.
+Archive SHA-256: `899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd`.
+Declared license: `MIT OR Apache-2.0`; MIT selected.
+````text
+Copyright (c) 2018-2025 The rust-random Project Developers
+Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+````
+
+### getrandom 0.4.3 — LICENSE-MIT
+
+Source: <https://crates.io/api/v1/crates/getrandom/0.4.3/download>, `LICENSE-MIT`.
+Archive SHA-256: `300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099`.
+Declared license: `MIT OR Apache-2.0`; MIT selected.
+````text
+Copyright (c) 2018-2026 The rust-random Project Developers
+Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+````
+
+### zerocopy 0.8.56 — LICENSE-MIT
+
+Source: <https://crates.io/api/v1/crates/zerocopy/0.8.56/download>, `LICENSE-MIT`.
+Archive SHA-256: `556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb`.
+Declared license: `BSD-2-Clause OR Apache-2.0 OR MIT`; MIT selected.
+````text
+Copyright 2023 The Fuchsia Authors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+Additional original source-file copyright notices (including test modules):
+
+`// Copyright 2018 The Fuchsia Authors` — `src/lib.rs`.
+
+`// Copyright 2019 The Fuchsia Authors` — `src/byteorder.rs`.
+
+`// Copyright 2022 The Fuchsia Authors` — `src/util/macro_util.rs`.
+
+`// Copyright 2023 The Fuchsia Authors` — `src/pointer/mod.rs`, `src/pointer/ptr.rs`, `src/util/macros.rs`, `src/util/mod.rs`, `src/wrappers.rs`.
+
+`// Copyright 2024 The Fuchsia Authors` — `build.rs`, `src/byte_slice.rs`, `src/deprecated.rs`, `src/error.rs`, `src/impls.rs`, `src/layout.rs`, `src/macros.rs`, `src/pointer/inner.rs`, `src/pointer/invariant.rs`, `src/ref.rs`.
+
+`// Copyright 2025 The Fuchsia Authors` — `src/doctests.rs`, `src/pointer/transmute.rs`, `src/split_at.rs`.
+
+### zerocopy-derive 0.8.56 — LICENSE-MIT
+
+Source: <https://crates.io/api/v1/crates/zerocopy-derive/0.8.56/download>, `LICENSE-MIT`.
+Archive SHA-256: `f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1`.
+Declared license: `BSD-2-Clause OR Apache-2.0 OR MIT`; MIT selected.
+````text
+Copyright 2023 The Fuchsia Authors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+Additional original source-file copyright notices (including test modules):
+
+`// Copyright 2019 The Fuchsia Authors` — `src/lib.rs`, `src/repr.rs`, `src/util.rs`.
+
+`// Copyright 2024 The Fuchsia Authors` — `src/output_tests/mod.rs`.
