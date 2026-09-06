@@ -77,11 +77,12 @@ process. This repository does not claim that all dependencies use one license.
 
 ## Selected Linux dependency license texts
 
-The notices below cover four dependencies in the locked default
+The notices below cover selected dependencies in the locked default
 `x86_64-unknown-linux-gnu` normal dependency graph: the local eframe patch,
-harfrust, option-ext and hexf-parse. This is a partial notice collection, not
-a complete binary redistribution bundle. Other transitive libraries, embedded
-default fonts, native components and historical artifacts still require review.
+harfrust, option-ext, hexf-parse, gpu-descriptor and gpu-descriptor-types.
+This is a partial notice collection, not a complete binary redistribution bundle.
+Other transitive libraries, embedded default fonts, native components and
+historical artifacts still require review.
 Graph membership alone does not establish which bytes a particular binary contains.
 
 These texts are carried by the existing local package and installer through
@@ -889,4 +890,56 @@ express Statement of Purpose.
  d. Affirmer understands and acknowledges that Creative Commons is not a
     party to this document and has no duty or obligation with respect to
     this CC0 or use of the Work.
+````
+
+## gpu-descriptor 0.3.2 and gpu-descriptor-types 0.2.0 — MIT
+
+Both packages offer MIT OR Apache-2.0. The MIT option is selected here.
+Their full MIT license and copyright notice are identical at the respective
+crate VCS revisions below and are reproduced once for both packages.
+The short upstream COPYING declaration is also retained; its relative license
+references are upstream text, not paths within this distribution.
+
+- `gpu-descriptor 0.3.2`: [MIT](https://github.com/zakarumych/gpu-descriptor/blob/bb28b4e55b742e0ea3e7a0968e7ee6287ba0e06a/license/MIT), [COPYING](https://github.com/zakarumych/gpu-descriptor/blob/bb28b4e55b742e0ea3e7a0968e7ee6287ba0e06a/COPYING).
+- `gpu-descriptor-types 0.2.0`: [MIT](https://github.com/zakarumych/gpu-descriptor/blob/9f2fb9546591322e7b77ee1e79385e01effd85e4/license/MIT), [COPYING](https://github.com/zakarumych/gpu-descriptor/blob/9f2fb9546591322e7b77ee1e79385e01effd85e4/COPYING).
+
+### Upstream COPYING declaration
+
+````text
+Copyright 2020 The gpu-descriptor Project Developers
+
+Licensed under the Apache License, Version 2.0, <license/LICENSE-APACHE or
+http://apache.org/licenses/LICENSE-2.0> or the MIT license <license/LICENSE-MIT or
+http://opensource.org/licenses/MIT>, at your option. This file may not be
+copied, modified, or distributed except according to those terms.
+````
+
+### Full MIT license
+
+````text
+Copyright (c) 2020 The gpu-descriptor project developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ````
